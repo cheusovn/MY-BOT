@@ -7,7 +7,10 @@ import string
 import time
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
+    LabeledPrice, PreCheckoutQuery,
+)
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -153,6 +156,177 @@ GOAL_HOOKS = {
 }
 
 
+# ─── ТАРИФЫ (единый источник цен) ───────────────────────────────────────────────────────────────
+# rub_old / rub_now — для отображения. stars — цена в Telegram Stars (оплата без ИП/самозанятого).
+# Курс ⭐: ≈ 1 Star ≈ 1.7 ₽ (Telegram удерживает комиссию, выплата через Fragment).
+TARIFFS = {
+    "base": {"label": "📦 Базовый", "old": 5900, "now": 2970, "stars": 1750,
+             "perks": "Все 7 дней курса + доступ навсегда"},
+    "vip":  {"label": "⭐ VIP с куратором", "old": 9900, "now": 4970, "stars": 2900,
+             "perks": "Все 7 дней + личный куратор + чат 24/7 + бонусы на 6 470 ₽"},
+    "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "stars": 4690,
+             "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM"},
+}
+
+# ─── АНАЛИТИКА: лог воронки ───────────────────────────────────────────────────────────────────────
+EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
+events_log = load_json(EVENTS_FILE, {"counters": {}, "recent": []})
+
+
+def track(event: str, uid: str = "", extra: str = ""):
+    """Считает события воронки: land_start, day1, day2, tariffs, buy_*, pay_success, referral…"""
+    try:
+        events_log.setdefault("counters", {})
+        events_log["counters"][event] = events_log["counters"].get(event, 0) + 1
+        events_log.setdefault("recent", []).append(
+            {"e": event, "uid": uid, "x": extra, "t": int(now_ts())})
+        events_log["recent"] = events_log["recent"][-500:]
+        save_json(EVENTS_FILE, events_log)
+    except Exception:
+        pass
+
+
+# ─── ГЕЙМИФИКАЦИЯ: XP, уровни, стрики, бейджи, квесты ──────────────────────────────────────────────
+LEVELS = [
+    (0,    "🥉 Новичок"),
+    (100,  "🥈 AI-Джуниор"),
+    (300,  "🥇 AI-Мастер"),
+    (700,  "💎 AI-Профи"),
+    (1500, "👑 AI-Гуру"),
+]
+
+BADGES = {
+    "first_step":   "🚀 Первый шаг",
+    "day1_done":    "✅ День 1 пройден",
+    "day2_done":    "🔥 День 2 пройден",
+    "explorer":     "🎁 Исследователь (забрал подарок)",
+    "referrer":     "💸 Амбассадор (есть промокод)",
+    "buyer":        "👑 Студент академии",
+    "streak3":      "🔥 Серия 3 дня",
+    "streak7":      "⚡ Серия 7 дней",
+}
+
+XP_RULES = {
+    "day1": 30, "day2": 50, "tariffs": 20,
+    "free_gift": 15, "referral": 25, "daily": 10, "buy": 100,
+}
+
+
+def _ensure_game(uid: str):
+    u = users.setdefault(uid, {})
+    u.setdefault("xp", 0)
+    u.setdefault("badges", [])
+    u.setdefault("streak", 0)
+    u.setdefault("last_day", "")
+    return u
+
+
+def level_for(xp: int):
+    name, nxt = LEVELS[0][1], None
+    for i, (thr, lbl) in enumerate(LEVELS):
+        if xp >= thr:
+            name = lbl
+            nxt = LEVELS[i + 1] if i + 1 < len(LEVELS) else None
+    return name, nxt
+
+
+def add_xp(uid: str, reason: str):
+    u = _ensure_game(uid)
+    amount = XP_RULES.get(reason, 0)
+    if amount:
+        u["xp"] = u.get("xp", 0) + amount
+        save_users()
+    return amount
+
+
+def give_badge(uid: str, badge_id: str) -> bool:
+    """Возвращает True, если бейдж выдан впервые."""
+    u = _ensure_game(uid)
+    if badge_id not in u["badges"]:
+        u["badges"].append(badge_id)
+        save_users()
+        return True
+    return False
+
+
+def touch_streak(uid: str):
+    """Обновляет ежедневную серию. Возвращает (streak, новый_бейдж|None)."""
+    u = _ensure_game(uid)
+    today = datetime.now().strftime("%Y-%m-%d")
+    last = u.get("last_day", "")
+    if last == today:
+        return u["streak"], None
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    u["streak"] = u.get("streak", 0) + 1 if last == yesterday else 1
+    u["last_day"] = today
+    add_xp(uid, "daily")
+    new_badge = None
+    if u["streak"] >= 7 and give_badge(uid, "streak7"):
+        new_badge = "streak7"
+    elif u["streak"] >= 3 and give_badge(uid, "streak3"):
+        new_badge = "streak3"
+    save_users()
+    return u["streak"], new_badge
+
+
+def progress_bar(xp: int, nxt) -> str:
+    if not nxt:
+        return "██████████ MAX"
+    cur_thr = 0
+    for thr, _ in LEVELS:
+        if xp >= thr:
+            cur_thr = thr
+    span = nxt[0] - cur_thr
+    filled = int(round(10 * (xp - cur_thr) / span)) if span else 10
+    filled = max(0, min(10, filled))
+    return "█" * filled + "░" * (10 - filled)
+
+
+def profile_text(uid: str, name: str) -> str:
+    u = _ensure_game(uid)
+    xp = u.get("xp", 0)
+    lvl, nxt = level_for(xp)
+    bar = progress_bar(xp, nxt)
+    nxt_line = f"До «{nxt[1]}»: {nxt[0] - xp} XP" if nxt else "Максимальный уровень 👑"
+    badges = u.get("badges", [])
+    badges_str = "  ".join(BADGES[b] for b in badges if b in BADGES) or "— пока нет, всё впереди!"
+    return (
+        f"🎮 <b>Профиль: {name}</b>\n\n"
+        f"Уровень: <b>{lvl}</b>\n"
+        f"Опыт: <b>{xp} XP</b>\n"
+        f"{bar}\n"
+        f"{nxt_line}\n\n"
+        f"🔥 Серия дней подряд: <b>{u.get('streak', 0)}</b>\n\n"
+        f"🏅 <b>Достижения ({len(badges)}/{len(BADGES)}):</b>\n{badges_str}\n\n"
+        "💡 Заходи каждый день и проходи уроки — XP и бейджи копятся, "
+        "а топ-ученики недели получают бонусы."
+    )
+
+
+def leaderboard_text() -> str:
+    ranked = sorted(
+        ((u.get("xp", 0), u.get("name", "Аноним")) for u in users.values()),
+        key=lambda x: x[0], reverse=True,
+    )
+    medals = ["🥇", "🥈", "🥉"] + ["▫️"] * 7
+    rows = []
+    for i, (xp, nm) in enumerate(ranked[:10]):
+        if xp <= 0:
+            continue
+        rows.append(f"{medals[i]} <b>{nm}</b> — {xp} XP")
+    body = "\n".join(rows) or "Пока никто не набрал XP. Будь первым! 🚀"
+    return (
+        "🏆 <b>РЕЙТИНГ УЧЕНИКОВ НЕДЕЛИ</b>\n\n"
+        f"{body}\n\n"
+        "💡 XP даётся за уроки, серии дней и активность. "
+        "Топ-3 в конце недели получают бонусные материалы."
+    )
+
+
+def badge_toast(badge_id: str) -> str:
+    return f"\n\n🎉 <b>Новое достижение:</b> {BADGES.get(badge_id, badge_id)}  (+бейдж в профиль)"
+
+
 class BroadcastState(StatesGroup):
     waiting = State()
 
@@ -174,6 +348,10 @@ def start_kb():
         [
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Кейсы", callback_data="results"),
+        ],
+        [
+            InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
+            InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
         [InlineKeyboardButton(text="💸 Заработать 30% с друзей", callback_data="referral")],
     ])
@@ -212,6 +390,20 @@ def tariffs_kb(spots: int = None):
             InlineKeyboardButton(text="🛡 Гарантия", callback_data="guarantee"),
             InlineKeyboardButton(text="❓ Вопросы", callback_data="faq"),
         ],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
+def pay_choice_kb(plan_key: str):
+    """Выбор способа оплаты: Telegram Stars (без ИП) или карта РФ через менеджера."""
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⭐ Оплатить в Telegram — {t['stars']} Stars",
+                              callback_data=f"stars_{plan_key}")],
+        [InlineKeyboardButton(text="💳 Картой РФ через менеджера",
+                              callback_data=f"card_{plan_key}")],
+        [InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
+                              callback_data=f"bump_{plan_key}")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
@@ -279,6 +471,14 @@ async def cmd_start(message: Message, state: FSMContext):
         except Exception:
             pass
 
+    # Источник перехода (?start=land с сайта и т.п.) + ежедневная серия
+    payload = ""
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1:
+        payload = parts[1].strip()
+    track("start_" + (payload or "direct"), user_id)
+    touch_streak(user_id)
+
     text = (
         f"👋 <b>{name}, привет!</b>\n\n"
         "Пока большинство ещё «думают попробовать» —\n"
@@ -342,6 +542,10 @@ async def cb_menu(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "free_gift")
 async def cb_free_gift(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    track("free_gift", user_id)
+    add_xp(user_id, "free_gift")
+    give_badge(user_id, "explorer")
     text = (
         "🎁 <b>100+ НЕЙРОСЕТЕЙ — БЕСПЛАТНО НА 100+ ДНЕЙ</b>\n\n"
         "<b>Рыночная цена этого набора: ~38 000 ₽/год.</b>\n"
@@ -368,9 +572,13 @@ async def cb_free_gift(call: CallbackQuery):
 async def cb_day1(call: CallbackQuery):
     user_id = str(call.from_user.id)
     set_stage(user_id, "day1")
+    track("day1", user_id)
+    add_xp(user_id, "day1")
+    new_badge = give_badge(user_id, "first_step")
+    bonus = badge_toast("first_step") if new_badge else ""
 
     text = (
-        "🎓 <b>ДЕНЬ 1 — ПРОГРЕСС: █░░ 33%</b>\n\n"
+        "🎓 <b>ДЕНЬ 1 — ПРОГРЕСС: █░░ 33%</b>  <i>(+30 XP)</i>\n\n"
         "Ты в бесплатном доступе к полному курсу.\n"
         "Не вводная лекция, а <b>реальные уроки</b>.\n\n"
         "<b>Что сделаешь за ближайшие 40 минут:</b>\n"
@@ -385,6 +593,7 @@ async def cb_day1(call: CallbackQuery):
         "⚠️ <b>Важно:</b> закрытое предложение и бонусы\n"
         "откроются <b>только после 2-го дня.</b>\n\n"
         "👇 Открывай прямо сейчас:"
+        + bonus
     )
     await show(call, text, day1_kb())
 
@@ -393,9 +602,13 @@ async def cb_day1(call: CallbackQuery):
 async def cb_day2(call: CallbackQuery):
     user_id = str(call.from_user.id)
     set_stage(user_id, "day2")
+    track("day2", user_id)
+    add_xp(user_id, "day2")
+    new_badge = give_badge(user_id, "day1_done")
+    bonus = badge_toast("day1_done") if new_badge else ""
 
     text = (
-        "🔥 <b>ДЕНЬ 2 — ПРОГРЕСС: ██░ 66%</b>\n\n"
+        "🔥 <b>ДЕНЬ 2 — ПРОГРЕСС: ██░ 66%</b>  <i>(+50 XP)</i>\n\n"
         "День 1 пройден — ты уже не новичок.\n"
         "Сегодня пересечёшь черту между\n"
         "«просто интересно» и <b>«могу заработать.»</b>\n\n"
@@ -412,6 +625,7 @@ async def cb_day2(call: CallbackQuery):
         "<b>ЗАКРЫТОЕ предложение + 3 бонуса.</b>\n"
         "Только для тех, кто дошёл до конца.\n\n"
         "👇 Открывай:"
+        + bonus
     )
     await show(call, text, day2_kb())
 
@@ -420,6 +634,9 @@ async def cb_day2(call: CallbackQuery):
 async def cb_special_tariffs(call: CallbackQuery):
     user_id = str(call.from_user.id)
     set_stage(user_id, "tariffs")
+    track("special_tariffs", user_id)
+    add_xp(user_id, "tariffs")
+    give_badge(user_id, "day2_done")
     tick_spots()
     s = get_spots()
 
@@ -593,29 +810,45 @@ async def cb_guarantee(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("buy_"))
 async def cb_buy(call: CallbackQuery):
-    plans = {
-        "buy_base": ("📦 Базовый — 2 970 ₽", "Базовый", "base"),
-        "buy_vip":  ("⭐ VIP — 4 970 ₽", "VIP", "vip"),
-        "buy_pro":  ("🚀 PRO — 7 970 ₽", "PRO", "pro"),
-    }
-    plan_label, plan_short, plan_key = plans.get(call.data, ("Тариф", "—", "vip"))
+    plan_key = call.data.replace("buy_", "")
+    if plan_key not in TARIFFS:
+        plan_key = "vip"
+    t = TARIFFS[plan_key]
     user_id = str(call.from_user.id)
-    set_stage(user_id, "purchased")
+    set_stage(user_id, "checkout")
+    track(f"buy_{plan_key}", user_id)
 
     text = (
-        f"✅ <b>Отличный выбор — {plan_short}!</b>\n\n"
-        "🎯 <b>Что сейчас произойдёт:</b>\n"
+        f"✅ <b>Отличный выбор — {t['label']}!</b>\n\n"
+        f"<s>{t['old']:,} ₽</s> → <b>{t['now']:,} ₽</b>\n".replace(",", " ") +
+        f"{t['perks']}\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "<b>Выбери способ оплаты:</b>\n\n"
+        f"⭐ <b>Telegram Stars</b> — мгновенно, прямо в приложении.\n"
+        f"💳 <b>Картой РФ</b> — менеджер пришлёт реквизиты, оплата за 2 минуты.\n\n"
+        "🛡 Двойная гарантия возврата действует при любом способе.\n"
+        "💡 Есть промокод друга? Скидку 500 ₽ применит менеджер.\n\n"
+        "👇"
+    )
+    await show(call, text, pay_choice_kb(plan_key))
+
+
+@dp.callback_query(lambda c: c.data.startswith("card_"))
+async def cb_card(call: CallbackQuery):
+    plan_key = call.data.replace("card_", "")
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    user_id = str(call.from_user.id)
+    set_stage(user_id, "purchased")
+    track("card_request", user_id, plan_key)
+
+    text = (
+        f"💳 <b>Оплата картой РФ — {t['label']}</b>\n\n"
+        "🎯 <b>Как это работает:</b>\n"
         "1️⃣ Напиши менеджеру\n"
-        "2️⃣ Он пришлёт реквизиты (сбер/тинькофф/карта)\n"
+        "2️⃣ Он пришлёт реквизиты (Сбер / Т-Банк / карта)\n"
         "3️⃣ Оплата за 2 минуты\n"
         "4️⃣ Доступ + бонусы приходят сразу\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "💡 <b>ПРОМОКОД ДРУГА?</b>\n"
-        "Назови его менеджеру — <b>скидка 500 ₽</b>.\n\n"
-        "✨ <b>UPGRADE за +990 ₽:</b>\n"
-        "Личный созвон с куратором 60 мин.\n"
-        "Разбор твоей ситуации, первые шаги.\n"
-        "(обычно 4 900 ₽ — сейчас 990 ₽ к тарифу)\n\n"
+        "💡 Промокод друга → скидка 500 ₽.\n"
         "🛡 Двойная гарантия возврата действует.\n\n"
         "👇 Написать менеджеру:"
     )
@@ -627,11 +860,81 @@ async def cb_buy(call: CallbackQuery):
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"💰 <b>НОВАЯ ЗАЯВКА!</b>\n\n"
+            f"💰 <b>НОВАЯ ЗАЯВКА (карта)!</b>\n\n"
             f"👤 {name} ({uname})\n"
             f"🆔 ID: <code>{call.from_user.id}</code>\n"
-            f"📦 Тариф: {plan_label}\n"
+            f"📦 Тариф: {t['label']} — {t['now']} ₽\n"
             f"🎯 Цель: {goal}"
+        )
+    except Exception:
+        pass
+
+
+@dp.callback_query(lambda c: c.data.startswith("stars_"))
+async def cb_stars(call: CallbackQuery):
+    plan_key = call.data.replace("stars_", "")
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    user_id = str(call.from_user.id)
+    track("stars_invoice", user_id, plan_key)
+    await call.answer()
+    try:
+        await bot.send_invoice(
+            chat_id=call.from_user.id,
+            title=f"{t['label']} — TRUE AI ACADEMY",
+            description=t["perks"],
+            payload=f"course_{plan_key}",
+            provider_token="",          # пусто = Telegram Stars (без ИП/самозанятого)
+            currency="XTR",
+            prices=[LabeledPrice(label=t["label"], amount=t["stars"])],
+            start_parameter="buy",
+        )
+    except Exception as e:
+        logging.error(f"Invoice error: {e}")
+        await call.message.answer(
+            "⚠️ Не удалось открыть оплату Stars. Давай картой РФ — это быстро:",
+            reply_markup=to_manager_kb(),
+        )
+
+
+@dp.pre_checkout_query()
+async def pre_checkout(pcq: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pcq.id, ok=True)
+
+
+@dp.message(lambda m: m.successful_payment is not None)
+async def on_paid(message: Message):
+    sp = message.successful_payment
+    plan_key = (sp.invoice_payload or "course_vip").replace("course_", "")
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    user_id = str(message.from_user.id)
+    set_stage(user_id, "paid")
+    track("pay_success", user_id, plan_key)
+
+    new_badge = give_badge(user_id, "buyer")
+    add_xp(user_id, "buy")
+
+    toast = badge_toast("buyer") if new_badge else ""
+    await message.answer(
+        f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
+        "Доступ ко всем 7 дням курса и бонусам открыт.\n"
+        f"Менеджер {MANAGER} свяжется с тобой в течение 15 минут "
+        "и добавит в закрытый чат с куратором.\n\n"
+        "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
+        + toast,
+        reply_markup=back_kb(),
+    )
+    name = message.from_user.first_name or "Юзер"
+    uname = f"@{message.from_user.username}" if message.from_user.username else "нет username"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"✅✅✅ <b>ОПЛАТА STARS!</b>\n\n"
+            f"👤 {name} ({uname})\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"📦 Тариф: {t['label']}\n"
+            f"⭐ {sp.total_amount} Stars\n"
+            f"🧾 charge: <code>{sp.telegram_payment_charge_id}</code>\n"
+            "→ Добавь в закрытый чат с куратором."
         )
     except Exception:
         pass
@@ -680,6 +983,10 @@ async def cb_referral(call: CallbackQuery):
     user_id = str(call.from_user.id)
     name = call.from_user.first_name or "друг"
 
+    track("referral", user_id)
+    add_xp(user_id, "referral")
+    give_badge(user_id, "referrer")
+
     code = users.get(user_id, {}).get("promo_code")
     if not code:
         code = next((c for c, uid in promos.items() if uid == user_id), None)
@@ -720,7 +1027,44 @@ async def cb_referral(call: CallbackQuery):
     await show(call, text, back_kb())
 
 
+@dp.callback_query(lambda c: c.data == "profile")
+async def cb_profile(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    name = call.from_user.first_name or "друг"
+    _, new_badge = touch_streak(user_id)
+    text = profile_text(user_id, name)
+    if new_badge:
+        text += badge_toast(new_badge)
+    await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Пройти урок (+XP)", callback_data="day1")],
+        [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
+@dp.callback_query(lambda c: c.data == "leaderboard")
+async def cb_leaderboard(call: CallbackQuery):
+    await show(call, leaderboard_text(), InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile")],
+        [InlineKeyboardButton(text="🎓 Заработать XP", callback_data="day1")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
 # ─── КОМАНДЫ ───────────────────────────────────────────────────────────────────────────
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message):
+    user_id = str(message.from_user.id)
+    name = message.from_user.first_name or "друг"
+    touch_streak(user_id)
+    await message.answer(profile_text(user_id, name), reply_markup=start_kb())
+
+
+@dp.message(Command("top"))
+async def cmd_top(message: Message):
+    await message.answer(leaderboard_text(), reply_markup=start_kb())
+
 
 @dp.message(Command("trial"))
 async def cmd_trial(message: Message):
@@ -751,7 +1095,9 @@ async def cmd_help(message: Message):
         "❓ <b>ПОМОЩЬ</b>\n\n"
         "/start — главное меню\n"
         "/trial — бесплатный доступ\n"
-        "/tariffs — тарифы\n\n"
+        "/tariffs — тарифы\n"
+        "/profile — твой прогресс, XP и бейджи 🎮\n"
+        "/top — рейтинг учеников 🏅\n\n"
         "💬 Менеджер ответит за 5 минут 👇"
     )
     await message.answer(text, reply_markup=to_manager_kb())
@@ -772,14 +1118,27 @@ async def cmd_stats(message: Message):
         goals[g] = goals.get(g, 0) + 1
     goal_lines = "\n".join(f"  {GOAL_LABELS.get(k, k)}: {v}" for k, v in sorted(goals.items()))
     total = len(users)
-    purchased = stages.get("purchased", 0)
+    purchased = stages.get("purchased", 0) + stages.get("paid", 0)
+    paid = stages.get("paid", 0)
     conv = (purchased / total * 100) if total else 0
+    c = events_log.get("counters", {})
+    funnel = (
+        f"  🌐 с сайта (land): {c.get('start_land', 0)}\n"
+        f"  ▶️ день 1: {c.get('day1', 0)}\n"
+        f"  ▶️ день 2: {c.get('day2', 0)}\n"
+        f"  💰 тарифы: {c.get('special_tariffs', 0)}\n"
+        f"  ⭐ счёт Stars: {c.get('stars_invoice', 0)}\n"
+        f"  💳 заявка картой: {c.get('card_request', 0)}\n"
+        f"  ✅ оплачено Stars: {c.get('pay_success', 0)}"
+    )
     await message.answer(
         f"📊 <b>Статистика</b>\n\n"
         f"👥 Пользователей: <b>{total}</b>\n"
         f"💰 Заявок: <b>{purchased}</b> ({conv:.1f}%)\n"
+        f"✅ Оплат Stars: <b>{paid}</b>\n"
         f"🎫 Промокодов: <b>{len(promos)}</b>\n"
         f"📦 Мест осталось: <b>{get_spots()}</b>\n\n"
+        f"<b>Воронка (события):</b>\n{funnel}\n\n"
         f"<b>По стадиям:</b>\n{stage_lines}\n\n"
         f"<b>По целям:</b>\n{goal_lines}"
     )

@@ -3,6 +3,11 @@
 .env.local
 *.env
 
+# Рантайм-данные (создаются ботом, не коммитим)
+events.json
+spots.json
+promo.json
+
 # Python
 __pycache__/
 *.pyc
