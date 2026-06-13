@@ -43,6 +43,14 @@ logging.basicConfig(level=logging.INFO)
 # Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
 # а не висит минуту, блокируя ответ (число секунд!).
 _session = AiohttpSession(timeout=30)
+# Принудительный IPv4: на многих облачных хостах (в т.ч. Amvera) попытка IPv6 к
+# api.telegram.org зависает и отваливается только по таймауту (TelegramNetworkError).
+# Форс AF_INET убирает «happy eyeballs» подвисания и резко снижает таймауты.
+try:
+    import socket as _socket
+    _session._connector_init["family"] = _socket.AF_INET
+except Exception as _e:
+    logging.warning(f"could not force IPv4 on session: {_e}")
 bot = Bot(
     token=BOT_TOKEN,
     session=_session,
@@ -1932,28 +1940,36 @@ async def wow_wish(message: Message, state: FSMContext):
         track("wow_gen_fail", user_id)
         return
 
-    # Успех — фиксируем расход (1 раз на аккаунт) и выдаём картинку
+    # Сначала пытаемся отдать картинку — и только при успехе сжигаем бесплатный шанс
+    try:
+        await message.answer_photo(
+            photo=BufferedInputFile(img_bytes, filename="ai_magic.png"),
+            caption=(
+                "🪄 <b>ГОТОВО — ВОТ ТВОЁ AI-ЧУДО!</b>\n\n"
+                "Ну как — <b>согласись, это проще, чем ты думал?</b> 🔥\n\n"
+                "А ведь это лишь капля. Тут собрано <b>100+ нейросетей</b> —\n"
+                "и возможностей в <b>100 раз больше</b>: видео, музыка, тексты, дизайн.\n\n"
+                "🏅 <b>+20 XP</b> за первое чудо!\n\n"
+                "👇 Забери весь арсенал:"
+            ),
+            reply_markup=wow_sell_kb(),
+        )
+    except Exception as e:
+        logging.warning(f"wow send photo failed: {e}")
+        await message.answer(
+            "Картинка готова, но связь подвисла 😅 Попробуй ещё раз через меню 🪄",
+            reply_markup=start_kb(),
+        )
+        return
+
+    # Успех доставлен — фиксируем расход (1 раз на аккаунт) и награды
     u = _ensure_game(user_id)
     u["wow_used"] = True
     save_users()
     add_xp(user_id, "wow")
     refresh_discount(user_id)
-    new_badge = give_badge(user_id, "wonder")
-    toast = badge_toast("wonder") if new_badge else ""
+    give_badge(user_id, "wonder")
     track("wow_done", user_id)
-
-    await message.answer_photo(
-        photo=BufferedInputFile(img_bytes, filename="ai_magic.png"),
-        caption=(
-            "🪄 <b>ГОТОВО — ВОТ ТВОЁ AI-ЧУДО!</b>\n\n"
-            "Ну как — <b>согласись, это проще, чем ты думал?</b> 🔥\n\n"
-            "А ведь это лишь капля. Тут собрано <b>100+ нейросетей</b> —\n"
-            "и возможностей в <b>100 раз больше</b>: видео, музыка, тексты, дизайн.\n\n"
-            f"🏅 <b>+20 XP</b> за первое чудо!{toast}\n\n"
-            "👇 Забери весь арсенал:"
-        ),
-        reply_markup=wow_sell_kb(),
-    )
 
     # Через 5 минут — мягкий зов на канал с гайдами
     asyncio.create_task(_send_channel_later(message.from_user.id))
@@ -2155,23 +2171,33 @@ async def gen_wish(message: Message, state: FSMContext):
         track("gen_fail", user_id)
         return
 
+    # Кредит списываем только после успешной отправки картинки
+    left_after = max(0, gen_credits(user_id) - 1)
+    try:
+        await message.answer_photo(
+            photo=BufferedInputFile(img_bytes, filename="ai_gen.png"),
+            caption=(
+                "🎨 <b>Готово!</b>\n\n"
+                f"Осталось генераций: <b>{left_after}</b>"
+                + ("" if left_after else " — пополни в 🛒 магазине за XP") + "\n\n"
+                "Хочешь ещё? Жми «Сгенерировать снова» 👇"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎨 Сгенерировать снова", callback_data="gen")],
+                [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+    except Exception as e:
+        logging.warning(f"gen send photo failed: {e}")
+        await message.answer(
+            "Картинка готова, но связь подвисла 😅 Генерация не списана — попробуй ещё раз 🎨",
+            reply_markup=start_kb(),
+        )
+        return
+
     use_gen_credit(user_id)
     track("gen_done", user_id)
-    left = gen_credits(user_id)
-    await message.answer_photo(
-        photo=BufferedInputFile(img_bytes, filename="ai_gen.png"),
-        caption=(
-            "🎨 <b>Готово!</b>\n\n"
-            f"Осталось генераций: <b>{left}</b>"
-            + ("" if left else " — пополни в 🛒 магазине за XP") + "\n\n"
-            "Хочешь ещё? Жми «Сгенерировать снова» 👇"
-        ),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎨 Сгенерировать снова", callback_data="gen")],
-            [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
-        ]),
-    )
 
 
 # ─── МЕХАНИКА №1: ЧЕЛЛЕНДЖ ДНЯ (промпт-дуэль, оценивает AI) ─────────────────────────────────────────
