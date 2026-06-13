@@ -5,6 +5,8 @@ import logging
 import random
 import string
 import time
+import base64
+import aiohttp
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import (
@@ -204,12 +206,67 @@ BADGES = {
     "buyer":        "👑 Студент академии",
     "streak3":      "🔥 Серия 3 дня",
     "streak7":      "⚡ Серия 7 дней",
+    "homework":     "📝 Работа проверена AI",
 }
 
 XP_RULES = {
     "day1": 30, "day2": 50, "tariffs": 20,
     "free_gift": 15, "referral": 25, "daily": 10, "buy": 100,
+    "homework": 40,
 }
+
+# ─── AI-НАСТАВНИК: проверка домашних работ ─────────────────────────────────────────────────────────
+# Ключ берётся из окружения. Если не задан — бот мягко направит на куратора.
+AI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+AI_API_URL = os.environ.get("AI_API_URL", "https://api.openai.com/v1/chat/completions")
+AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+
+HW_SYSTEM_PROMPT = (
+    "Ты — доброжелательный, но требовательный наставник курса по нейросетям "
+    "True AI Academy. Ученик присылает свою домашнюю работу: изображение, кадр из "
+    "AI-видео, карточку товара или текст/промпт, созданные с помощью нейросетей. "
+    "Дай разбор на русском, кратко и по делу, строго в таком формате (с эмодзи-заголовками):\n\n"
+    "✅ <b>Что получилось хорошо</b> — 2-3 пункта\n"
+    "🛠 <b>Что улучшить</b> — 2-3 конкретных совета (композиция, свет, промпт, детали)\n"
+    "⭐ <b>Оценка</b> — N/10\n"
+    "👉 <b>Следующий шаг</b> — одно практическое задание\n\n"
+    "Будь поддерживающим, мотивируй продолжать. Не используй markdown ** **, только "
+    "HTML-теги <b></b>. Максимум ~180 слов."
+)
+
+
+async def ai_review(user_text: str, image_b64: str = None) -> str:
+    """Запрос к AI-модели. Возвращает текст разбора или None при ошибке/отсутствии ключа."""
+    if not AI_API_KEY:
+        return None
+    content = [{"type": "text", "text": user_text or "Проверь мою работу по курсу нейросетей."}]
+    if image_b64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+        })
+    payload = {
+        "model": AI_MODEL,
+        "messages": [
+            {"role": "system", "content": HW_SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ],
+        "max_tokens": 700,
+        "temperature": 0.6,
+    }
+    headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.post(AI_API_URL, json=payload, headers=headers) as r:
+                data = await r.json()
+                if r.status != 200:
+                    logging.error(f"AI review HTTP {r.status}: {data}")
+                    return None
+                return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logging.error(f"AI review error: {e}")
+        return None
 
 
 def _ensure_game(uid: str):
@@ -331,6 +388,10 @@ class BroadcastState(StatesGroup):
     waiting = State()
 
 
+class HomeworkState(StatesGroup):
+    waiting = State()
+
+
 # ─── КЛАВИАТУРЫ ─────────────────────────────────────────────────────────────────────────────────
 
 def goal_kb():
@@ -353,6 +414,7 @@ def start_kb():
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
+        [InlineKeyboardButton(text="🤖 Сдать ДЗ — проверит AI-наставник", callback_data="homework")],
         [InlineKeyboardButton(text="💸 Заработать 30% с друзей", callback_data="referral")],
     ])
 
@@ -1053,6 +1115,116 @@ async def cb_leaderboard(call: CallbackQuery):
     ]))
 
 
+# ─── AI-НАСТАВНИК: проверка ДЗ ─────────────────────────────────────────────────────────────────────
+
+def homework_cancel_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✖️ Отмена", callback_data="hw_cancel")],
+    ])
+
+
+@dp.callback_query(lambda c: c.data == "homework")
+async def cb_homework(call: CallbackQuery, state: FSMContext):
+    await state.set_state(HomeworkState.waiting)
+    text = (
+        "🤖 <b>AI-НАСТАВНИК — ПРОВЕРКА ДЗ</b>\n\n"
+        "Пришли свою работу одним сообщением:\n"
+        "🖼 <b>картинку</b> (изображение, карточка, кадр из видео)\n"
+        "✍️ или <b>текст/промпт</b>, который ты составил.\n\n"
+        "Я разберу: что получилось, что улучшить, оценю\n"
+        "и подскажу следующий шаг. За проверку — <b>+40 XP</b> 🏅\n\n"
+        "💡 К картинке можно добавить подпись — что ты хотел получить.\n\n"
+        "👇 Жду твою работу:"
+    )
+    await show(call, text, homework_cancel_kb())
+
+
+@dp.callback_query(lambda c: c.data == "hw_cancel")
+async def cb_hw_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show(call, "Окей, проверку отменил. Возвращайся, когда будешь готов 👇", start_kb())
+
+
+@dp.message(HomeworkState.waiting)
+async def process_homework(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    has_photo = bool(message.photo)
+    user_text = (message.caption or message.text or "").strip()
+
+    # Команда во время ожидания ДЗ — выходим из режима, не шлём в AI
+    if not has_photo and user_text.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, проверку отменил. Команда ниже 👇", reply_markup=start_kb())
+        return
+
+    if not has_photo and not user_text:
+        await message.answer(
+            "Пришли <b>картинку</b> или <b>текст</b> работы — и я её проверю 🙌",
+            reply_markup=homework_cancel_kb(),
+        )
+        return
+
+    await state.clear()
+    thinking = await message.answer("🤖 Анализирую твою работу… это займёт несколько секунд.")
+
+    image_b64 = None
+    if has_photo:
+        try:
+            file = await bot.get_file(message.photo[-1].file_id)
+            bio = await bot.download_file(file.file_path)
+            image_b64 = base64.b64encode(bio.read()).decode("utf-8")
+        except Exception as e:
+            logging.error(f"HW download error: {e}")
+
+    review = await ai_review(user_text, image_b64)
+
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+
+    if not review:
+        # Нет ключа AI или ошибка — мягкий fallback на куратора
+        await message.answer(
+            "🙌 <b>Работу получил!</b>\n\n"
+            "Сейчас AI-проверка временно недоступна — твою работу\n"
+            f"посмотрит живой куратор. Напиши ему: {MANAGER}\n\n"
+            "А пока держи <b>+40 XP</b> за то, что сделал ДЗ 🏅",
+            reply_markup=start_kb(),
+        )
+        add_xp(user_id, "homework")
+        give_badge(user_id, "homework")
+        track("homework_fallback", user_id)
+        return
+
+    track("homework_ai", user_id)
+    add_xp(user_id, "homework")
+    new_badge = give_badge(user_id, "homework")
+    toast = badge_toast("homework") if new_badge else ""
+
+    await message.answer(
+        "🤖 <b>РАЗБОР ОТ AI-НАСТАВНИКА</b>\n\n"
+        f"{review}\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "🏅 <b>+40 XP</b> за выполненное ДЗ!" + toast,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Проверить ещё работу", callback_data="homework")],
+            [InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ]),
+    )
+    try:
+        name = message.from_user.first_name or "Юзер"
+        await bot.send_message(
+            ADMIN_ID,
+            f"📝 <b>ДЗ проверено AI</b>\n"
+            f"👤 {name} (<code>{user_id}</code>)\n"
+            f"🖼 фото: {'да' if has_photo else 'нет'}"
+        )
+    except Exception:
+        pass
+
+
 # ─── КОМАНДЫ ───────────────────────────────────────────────────────────────────────────
 
 @dp.message(Command("profile"))
@@ -1066,6 +1238,17 @@ async def cmd_profile(message: Message):
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
     await message.answer(leaderboard_text(), reply_markup=start_kb())
+
+
+@dp.message(Command("dz"))
+async def cmd_dz(message: Message, state: FSMContext):
+    await state.set_state(HomeworkState.waiting)
+    await message.answer(
+        "🤖 <b>AI-НАСТАВНИК — ПРОВЕРКА ДЗ</b>\n\n"
+        "Пришли картинку или текст своей работы — разберу,\n"
+        "оценю и подскажу, что улучшить. За проверку <b>+40 XP</b> 🏅",
+        reply_markup=homework_cancel_kb(),
+    )
 
 
 @dp.message(Command("trial"))
@@ -1099,6 +1282,7 @@ async def cmd_help(message: Message):
         "/trial — бесплатный доступ\n"
         "/tariffs — тарифы\n"
         "/profile — твой прогресс, XP и бейджи 🎮\n"
+        "/dz — сдать домашку на проверку AI-наставнику 🤖\n"
         "/top — рейтинг учеников 🏅\n\n"
         "💬 Менеджер ответит за 5 минут 👇"
     )
