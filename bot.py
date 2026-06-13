@@ -6,7 +6,6 @@ import random
 import string
 import time
 from datetime import datetime, timedelta
-import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import Command, CommandStart
@@ -34,10 +33,8 @@ PRICE_PRO = (14900, 7900)
 
 logging.basicConfig(level=logging.INFO)
 
-# Увеличенные таймауты для стабильной работы на Amvera
-_session = AiohttpSession(
-    timeout=aiohttp.ClientTimeout(total=60, connect=10, sock_read=30)
-)
+# Увеличенный таймаут для стабильной работы на Amvera (число секунд!)
+_session = AiohttpSession(timeout=60)
 bot = Bot(
     token=BOT_TOKEN,
     session=_session,
@@ -900,7 +897,7 @@ async def follow_up_scheduler():
                     users[uid]["fu_tariffs"] = True
                     save_users()
 
-                # FU4: просил напомнить через 24ч
+                               # FU4: просил напомнить через 24ч
                 if (data.get("remind_at") and ts > data["remind_at"]
                         and not data.get("remind_sent")):
                     await bot.send_message(
