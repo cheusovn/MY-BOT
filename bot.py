@@ -3091,6 +3091,67 @@ async def cmd_paytest(message: Message):
     )
 
 
+async def _img_test_one(model: str, prompt: str, image_b64: str):
+    """Один запрос к конкретной image-модели. Возвращает bytes или None; кидает на HTTP-ошибке."""
+    content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+    ]
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    headers.update(OPENROUTER_EXTRA)
+    payload = {"model": model, "messages": [{"role": "user", "content": content}],
+               "modalities": ["image", "text"]}
+    timeout = aiohttp.ClientTimeout(total=120)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
+            data = await r.json()
+            if r.status != 200:
+                raise RuntimeError(f"HTTP {r.status}: {str(data)[:120]}")
+            for im in (data["choices"][0]["message"].get("images") or []):
+                url = (im.get("image_url") or {}).get("url", "")
+                if url.startswith("data:"):
+                    return base64.b64decode(url.split(",", 1)[1])
+    return None
+
+
+@dp.message(Command("imgtest"))
+async def cmd_imgtest(message: Message):
+    """Только админ: прогоняет ВСЕ image-модели на тестовом фото и шлёт результат."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    if not OPENROUTER_KEY:
+        await message.answer("⚠️ OPENROUTER_API_KEY не задан в окружении.")
+        return
+    src = os.path.join(IMG_DIR, "author.jpg")
+    if not os.path.exists(src):
+        await message.answer("⚠️ Нет images/author.jpg для теста.")
+        return
+    with open(src, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    prompt = ("Clean professional business headshot, soft neutral studio background, "
+              "keep the face identical to the photo.")
+    await message.answer("🧪 Тестирую все image-модели по очереди… ~30 с каждая.")
+    lines = []
+    for model in AI_IMAGE_MODELS:
+        t = now_ts()
+        try:
+            img = await _img_test_one(model, prompt, b64)
+            dt = now_ts() - t
+            if img:
+                lines.append(f"✅ <code>{model}</code> — {len(img) // 1024} KB, {dt:.0f}с")
+                try:
+                    await message.answer_photo(
+                        BufferedInputFile(img, filename=f"{model.split('/')[-1]}.png"),
+                        caption=model)
+                except Exception:
+                    pass
+            else:
+                lines.append(f"⚠️ <code>{model}</code> — без картинки, {dt:.0f}с")
+        except Exception as e:
+            lines.append(f"❌ <code>{model}</code> — {str(e)[:70]}")
+    await message.answer("🧪 <b>Итог:</b>\n" + "\n".join(lines))
+
+
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
