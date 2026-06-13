@@ -302,6 +302,36 @@ BANNERS = [
      "A clean modern desk: a laptop screen showing polished product photos and a freelance "
      "order confirmation, a smartphone with a payment notification beside it, a cup of "
      "coffee, soft green accent light, evening city softly blurred through the window."),
+    ("day3", "День 3 · курс", "Продающие картинки и карточки",
+     "Делаешь визуал, который продаёт",
+     "A premium e-commerce still life: a sleek product photo displayed on a tablet next to "
+     "a neatly designed marketplace product card mockup, soft studio light, minimal props, "
+     "elegant commercial look, warm green accent glow."),
+    ("day4", "День 4 · курс", "AI-видео: рилсы и ролики",
+     "Короткие видео, которые досматривают",
+     "A smartphone on a small tripod with a softbox ring light, the screen showing a vibrant "
+     "vertical short-video frame with a glowing play button, cozy creator desk, bokeh, "
+     "warm green accent glow, no people."),
+    ("day5", "День 5 · курс", "Звук: голос и музыка",
+     "Озвучка, голоса и музыка нейросетью",
+     "A cozy home studio still life: a condenser microphone and headphones on a desk, a "
+     "laptop screen showing a glowing audio waveform and music timeline, soft warm light "
+     "with green accents, no people."),
+    ("day6", "День 6 · курс", "Собираем портфолио",
+     "Работы, которые приносят заказы",
+     "A tablet and a clean wall showing an organized grid of polished creative works "
+     "(images, thumbnails), tidy minimal workspace, premium gallery feel, soft light with "
+     "a green accent glow, no people."),
+    ("day7", "День 7 · курс", "Где брать заказы",
+     "Навык → клиент → деньги",
+     "A laptop on a desk showing a freelance marketplace with a new order and a chat bubble "
+     "saying accepted, a phone with a payment notification beside it, a cup of coffee, "
+     "warm green accent light, no people."),
+    ("day8", "День 8 · бонус", "Продвижение и продажи",
+     "SMM, маркетинг и поток клиентов",
+     "A dark premium dashboard still life: a rising growth chart on a screen with floating "
+     "glowing social engagement icons (likes, arrows up) around it, dynamic successful "
+     "marketing vibe, acid-green and mint glow, no text on the icons, no people."),
     ("tariffs", "Тарифы", "Выбери, как удобно учиться",
      "Оплатил один раз — доступ остаётся навсегда",
      "Three sleek premium dark glass cards floating in soft studio light, the middle one "

@@ -1470,7 +1470,7 @@ async def cb_course_day(call: CallbackQuery):
                 f"откроется день {n + 1}.")
     else:
         tail = "Это финальный день курса 🏁\nДальше — практика, портфолио и первые заказы 🚀"
-    await show(call, f"{head}\n{bar}\n\n{tail}\n\n👇", lesson_kb(n))
+    await show_img(call, f"day{n}.jpg", f"{head}\n{bar}\n\n{tail}\n\n👇", lesson_kb(n))
 
 
 @dp.callback_query(lambda c: c.data.startswith("hw_"))
