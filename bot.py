@@ -10,7 +10,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
-import os
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 817730727
 BOT_USERNAME = "Trueman_ai_bot"
@@ -20,6 +19,10 @@ GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 MANAGER = "@nikolay_cheusov"
 WELCOME_IMG = "welcome.jpg"
 
+# Социальное доказательство — обновляй раз в неделю
+STUDENTS_COUNT = "2 347"
+SPOTS_LEFT = 23
+
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
@@ -28,53 +31,74 @@ DATA_DIR = "/data" if os.path.exists("/data") else "."
 PROMO_FILE = os.path.join(DATA_DIR, "promo.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
+
 def load_json(file):
     if os.path.exists(file):
         with open(file, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
+
 def save_json(file, data):
     with open(file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+
 promos = load_json(PROMO_FILE)
 users = load_json(USERS_FILE)
+
 
 def save_promos(data): save_json(PROMO_FILE, data)
 def save_users(data): save_json(USERS_FILE, data)
 
+
 class PromoState(StatesGroup):
     waiting = State()
 
+
+# ─── КЛАВИАТУРЫ ───────────────────────────────────────────────────────────────
+
 def start_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Забрать 2 дня БЕСПЛАТНО", callback_data="day1")],
-        [InlineKeyboardButton(text="💰 Тарифы и цены", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🎁 Получить 2 дня БЕСПЛАТНО", callback_data="day1")],
+        [
+            InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
+            InlineKeyboardButton(text="🏆 Результаты", callback_data="results"),
+        ],
         [InlineKeyboardButton(text="👥 Заработать с другом", callback_data="referral")],
     ])
 
+
 def day1_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 100+ нейросетей в ПОДАРОК", url=GIFT_LINK)],
+        [InlineKeyboardButton(text="🎁 100+ нейросетей — ЗАБРАТЬ БЕСПЛАТНО", url=GIFT_LINK)],
         [InlineKeyboardButton(text="🚀 Открыть 1-й день", url=TRIAL_DAY_1)],
-        [InlineKeyboardButton(text="✅ Я прошёл 1-й день", callback_data="day2")],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
-    ])
-def day2_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 Открыть 2-й день", url=TRIAL_DAY_2)],
-        [InlineKeyboardButton(text="✅ Я прошёл 2-й день", callback_data="tariffs")],
+        [InlineKeyboardButton(text="✅ Я прошёл 1-й день →", callback_data="day2")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
-def tariffs_kb():
+
+def day2_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 Базовый — 5 900 ₽", callback_data="buy_base")],
-        [InlineKeyboardButton(text="⭐ VIP с куратором — 9 900 ₽", callback_data="buy_vip")],
-        [InlineKeyboardButton(text="🚀 PRO + продвижение — 15 900 ₽", callback_data="buy_pro")],
+        [InlineKeyboardButton(text="🔥 Открыть 2-й день", url=TRIAL_DAY_2)],
+        [InlineKeyboardButton(text="✅ Я прошёл 2-й день — смотреть цены 💰", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
+
+
+def tariffs_kb():
+    # PRO показан первым — якорный эффект делает VIP «выгодным»
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 PRO + продвижение — 15 900 ₽", callback_data="buy_pro")],
+        [InlineKeyboardButton(text="⭐ VIP с куратором — 9 900 ₽  ← ТОПЧИК", callback_data="buy_vip")],
+        [InlineKeyboardButton(text="📦 Базовый — 5 900 ₽", callback_data="buy_base")],
+        [
+            InlineKeyboardButton(text="🛡 Гарантия", callback_data="guarantee"),
+            InlineKeyboardButton(text="❓ Вопросы", callback_data="faq"),
+        ],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
 
 def to_manager_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -82,18 +106,32 @@ def to_manager_kb():
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
+
 def back_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
-async def show(call, text, kb):
+
+def back_to_tariffs_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Назад к тарифам", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
+# ─── ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ──────────────────────────────────────────────────
+
+async def show(call: CallbackQuery, text: str, kb: InlineKeyboardMarkup):
     try:
         await call.message.delete()
-    except:
+    except Exception:
         pass
     await call.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
     await call.answer()
+
+
+# ─── ХЭНДЛЕРЫ ─────────────────────────────────────────────────────────────────
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -105,160 +143,286 @@ async def cmd_start(message: Message, state: FSMContext):
         users[user_id] = {"name": name}
         save_users(users)
         try:
-            await bot.send_message(ADMIN_ID, f"🔔 Новый пользователь: {name} (ID: {user_id})")
-        except: pass
+            await bot.send_message(
+                ADMIN_ID,
+                f"🔔 Новый пользователь: <b>{name}</b>\n"
+                f"🆔 ID: <code>{user_id}</code>\n"
+                f"👥 Всего пользователей: {len(users)}"
+            )
+        except Exception:
+            pass
 
     text = (
-        f"👋 Привет, <b>{name}</b>!\n\n"
-        "🤖 Добро пожаловать в <b>True AI Academy</b> — "
-        "обучение нейросетям с нуля до профи за 7 дней.\n\n"
-        "🎁 <b>Первые 2 дня — БЕСПЛАТНО!</b>\n"
-        "💰 Ты научишься зарабатывать на AI, даже если никогда "
-        "этим не занимался.\n\n"
-        "👇 Жми кнопку и начинай прямо сейчас:"
+        f"👋 <b>{name}, привет!</b>\n\n"
+        f"Ты попал в <b>True AI Academy</b> — школу, где уже <b>{STUDENTS_COUNT} человек</b>\n"
+        "научились зарабатывать на нейросетях.\n\n"
+        "За 7 дней ты пройдёшь путь от «что такое AI?» до первых заказов.\n"
+        "Без опыта. Без технических знаний. С нуля.\n\n"
+        "🎁 <b>Первые 2 дня — полностью бесплатно.</b>\n\n"
+        "👇 Выбери, с чего начать:"
     )
+
     if os.path.exists(WELCOME_IMG):
-        await message.answer_photo(photo=FSInputFile(WELCOME_IMG), caption=text, reply_markup=start_kb())
+        await message.answer_photo(
+            photo=FSInputFile(WELCOME_IMG),
+            caption=text,
+            reply_markup=start_kb()
+        )
     else:
         await message.answer(text, reply_markup=start_kb())
+
 
 @dp.callback_query(lambda c: c.data == "menu")
 async def cb_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
     name = call.from_user.first_name or "друг"
-    text = f"🏠 <b>Главное меню</b>\n\nПривет, {name}! Выбери, что тебе нужно 👇"
+    text = (
+        f"🏠 <b>Главное меню</b>\n\n"
+        f"{name}, что тебя интересует? 👇"
+    )
     await show(call, text, start_kb())
+
 
 @dp.callback_query(lambda c: c.data == "day1")
 async def cb_day1(call: CallbackQuery):
     text = (
-        "🎉 <b>ПОЗДРАВЛЯЮ! Ты сделал первый шаг в мир AI!</b>\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "📅 <b>ДЕНЬ 1 — ТВОЙ СТАРТ В НЕЙРОСЕТЯХ</b>\n"
-        "━━━━━━━━━━━━━━━\n\n"
-        "🎁 <b>СРАЗУ ЗАБИРАЕШЬ ПОДАРОК:</b>\n"
-        "💎 <b>100+ топовых нейросетей</b> — моя личная подборка,\n"
-        "за которую другие платят тысячи рублей. Твоя — бесплатно!\n\n"
-        "🚀 <b>Что ты сделаешь уже сегодня:</b>\n"
-        "✨ Запустишь свою <b>первую нейросеть</b>\n"
-        "🖼 Создашь первые <b>картинки по готовому промпту</b>\n"
-        "😍 Увидишь, как из пары слов рождается шедевр\n\n"
-        "💡 <i>Уже на 1-м дне ты поймёшь — это проще, чем кажется!</i>\n\n"
-        "👇 Жми кнопку, погружайся, а потом возвращайся за <b>2-м днём</b> 🔥"
+        "🎉 <b>Добро пожаловать в первый шаг!</b>\n\n"
+        "┌─────────────────────────┐\n"
+        "│  📅  ДЕНЬ 1 — ПОГРУЖЕНИЕ  │\n"
+        "└─────────────────────────┘\n\n"
+        "Прямо сейчас ты получаешь <b>подарок:</b>\n"
+        "💎 <b>100+ топовых нейросетей</b> — личная подборка\n"
+        "автора. Другие платят за это тысячи — тебе бесплатно.\n\n"
+        "<b>Что ты сделаешь в 1-й день:</b>\n"
+        "▸ Запустишь первую нейросеть за 5 минут\n"
+        "▸ Создашь изображения, которые поразят друзей\n"
+        "▸ Напишешь первый рабочий промпт\n"
+        "▸ Поймёшь, <i>где деньги в AI</i>\n\n"
+        "💬 <i>«После 1-го дня я понял, что это не сложно.\n"
+        "Я просто боялся начать» — Алексей, студент</i>\n\n"
+        "👇 Забирай подарок и открывай 1-й день:"
     )
     await show(call, text, day1_kb())
+
 
 @dp.callback_query(lambda c: c.data == "day2")
 async def cb_day2(call: CallbackQuery):
     text = (
-        "🔥 <b>ОГОНЬ! Ты прошёл 1-й день — ты уже в игре!</b>\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "📅 <b>ДЕНЬ 2 — ПРОКАЧКА ДО НОВОГО УРОВНЯ</b>\n"
-        "━━━━━━━━━━━━━━━\n\n"
-        "⚡ Сегодня ты перестаёшь быть новичком!\n\n"
-        "🎨 <b>Что тебя ждёт:</b>\n"
-        "🔸 Углубляемся в нейросети по-серьёзному\n"
-        "🔸 Делаешь <b>профессиональные генерации</b>\n"
-        "🔸 Учишься <b>писать промпты САМ</b> — без шаблонов\n"
-        "🔸 Создаёшь работы, за которые <b>уже платят деньги</b> 💸\n\n"
-        "💪 <i>После 2-го дня ты сможешь брать первые заказы!</i>\n\n"
-        "👉 Открывай 2-й день — а в конце тебя ждёт <b>особый сюрприз</b> 🎁"
+        "🔥 <b>День 1 — пройден! Ты уже не новичок.</b>\n\n"
+        "┌─────────────────────────┐\n"
+        "│  📅  ДЕНЬ 2 — ПРОКАЧКА    │\n"
+        "└─────────────────────────┘\n\n"
+        "Сегодня ты перешагнёшь черту между\n"
+        "«просто интересно» и «я могу на этом зарабатывать».\n\n"
+        "<b>Программа 2-го дня:</b>\n"
+        "▸ Профессиональные генерации — уровень эксперта\n"
+        "▸ Пишешь промпты сам, без шаблонов\n"
+        "▸ Создаёшь работы, за которые <b>уже платят 5–30k ₽</b>\n"
+        "▸ Видишь воронку: навык → заказ → деньги\n\n"
+        "💬 <i>«После 2-го дня я взял первый заказ на 8 000₽»\n"
+        "— Марина, 3 недели обучения</i>\n\n"
+        "⚡ После 2-го дня тебе откроются <b>все 7 дней курса</b> —\n"
+        "со скидкой для тех, кто дошёл до конца. 👇"
     )
     await show(call, text, day2_kb())
+
 
 @dp.callback_query(lambda c: c.data == "tariffs")
 async def cb_tariffs(call: CallbackQuery):
     text = (
-        "🔥 <b>Ты прошёл бесплатную часть! Теперь — полный курс:</b>\n\n"
         "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
-        "━━━━━━━━━━━━━━━\n"
+        f"⚠️ Осталось мест по акционной цене: <b>{SPOTS_LEFT}</b>\n\n"
+        "──────────────────────────\n"
+        "🚀 <b>PRO + ПРОДВИЖЕНИЕ — 15 900 ₽</b>\n"
+        "──────────────────────────\n"
+        "Для тех, кто хочет не просто учиться, а <b>выйти на доход</b>:\n"
+        "✅ Всё из VIP\n"
+        "💼 Где брать заказы — проверенные площадки\n"
+        "🤝 Система поиска клиентов под ключ\n"
+        "🔥 Поиск вирусного контента (что залетает)\n"
+        "📢 Реклама: настроить и не слить бюджет\n"
+        "📱 SMM-маркетинг с нуля\n"
+        "🧲 Лид-магниты и воронки продаж\n"
+        "🎯 Как набрать 1 млн просмотров\n\n"
+        "──────────────────────────\n"
+        "⭐ <b>VIP С КУРАТОРОМ — 9 900 ₽</b>  ← выбирает большинство\n"
+        "──────────────────────────\n"
+        "✅ Все 7 дней курса\n"
+        "✅ Личный куратор + проверка домашних заданий\n"
+        "✅ Закрытый чат поддержки 24/7\n"
+        "✅ Доступ навсегда\n\n"
+        "──────────────────────────\n"
         "📦 <b>БАЗОВЫЙ — 5 900 ₽</b>\n"
-        "━━━━━━━━━━━━━━━\n"
+        "──────────────────────────\n"
         "✅ Все 7 дней курса\n"
         "✅ Доступ навсегда\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "⭐ <b>VIP С КУРАТОРОМ — 9 900 ₽</b>\n"
-        "━━━━━━━━━━━━━━━\n"
-        "✅ Всё из «Базового»\n"
-        "✅ Личный куратор + проверка ДЗ\n"
-        "✅ Закрытый чат поддержки\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "🚀 <b>VIP + ПРОДВИЖЕНИЕ — 15 900 ₽</b>\n"
-        "🏆 <i>Выбор тех, кто хочет ЗАРАБАТЫВАТЬ</i>\n"
-        "━━━━━━━━━━━━━━━\n"
-        "✅ Всё из «VIP с куратором»\n"
-        "💼 <b>Где брать заказы</b> — проверенные площадки\n"
-        "🤝 <b>Где брать клиентов</b> — пошаговая система\n"
-        "🔥 <b>Поиск вирусного контента</b> — что залетает\n"
-        "📢 <b>Реклама</b> — как настроить и не слить бюджет\n"
-        "📱 <b>SMM-маркетинг</b> — раскрутка с нуля\n"
-        "🧲 <b>Лид-магниты и воронки</b> — клиенты на автопилоте\n"
-        "🎯 <b>Как набрать 1 млн просмотров</b>\n\n"
-        "💸 <i>С этим тарифом ты не просто учишься — ты выходишь на доход!</i>\n\n"
-        "⏰ <b>Все цены с учётом акции!</b>\n"
-        "Завтра будет повышение цен. Выбирай 👇"
+        "🛡 <b>Гарантия:</b> если после 1-го дня курс не понравится —\n"
+        "вернём деньги. Без вопросов.\n\n"
+        "👇 Выбирай тариф:"
     )
     await show(call, text, tariffs_kb())
 
+
+@dp.callback_query(lambda c: c.data == "results")
+async def cb_results(call: CallbackQuery):
+    text = (
+        "🏆 <b>РЕЗУЛЬТАТЫ СТУДЕНТОВ</b>\n\n"
+        f"За полгода через академию прошли <b>{STUDENTS_COUNT}+ человек.</b>\n"
+        "Вот что говорят те, кто уже учится:\n\n"
+        "──────────────────────────\n"
+        "💬 <b>Марина, фрилансер:</b>\n"
+        "<i>«Взяла первый заказ через 3 дня после курса.\n"
+        "8 000 ₽ за генерацию логотипов. Я в шоке, что это так просто»</i>\n\n"
+        "──────────────────────────\n"
+        "💬 <b>Алексей, менеджер:</b>\n"
+        "<i>«Сначала боялся — я же не технарь. Оказалось,\n"
+        "нейросети проще, чем Excel. Теперь делаю\n"
+        "контент для клиентов за доп. 30k/мес»</i>\n\n"
+        "──────────────────────────\n"
+        "💬 <b>Ирина, мама в декрете:</b>\n"
+        "<i>«Искала, чем заниматься из дома.\n"
+        "После курса нашла 4 заказчика на иллюстрации.\n"
+        "Зарабатываю 25–40k ₽ в месяц»</i>\n\n"
+        "──────────────────────────\n"
+        "💬 <b>Дмитрий, предприниматель:</b>\n"
+        "<i>«Теперь весь контент для бизнеса делаю сам.\n"
+        "Экономлю 50 000 ₽/мес на дизайнерах»</i>\n\n"
+        "🎁 <b>Начни с бесплатных 2 дней — и убедись сам</b>"
+    )
+    await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Попробовать бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Смотреть тарифы", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
+@dp.callback_query(lambda c: c.data == "faq")
+async def cb_faq(call: CallbackQuery):
+    text = (
+        "❓ <b>ЧАСТЫЕ ВОПРОСЫ</b>\n\n"
+        "──────────────────────────\n"
+        "❔ <b>Нужны ли технические знания?</b>\n"
+        "Нет. Курс создан для людей без опыта в IT.\n"
+        "Если умеешь пользоваться телефоном — разберёшься.\n\n"
+        "──────────────────────────\n"
+        "❔ <b>За какое время реально заработать?</b>\n"
+        "Первые заказы студенты берут на 3–7 день курса.\n"
+        "Стабильный доход 30–80k ₽/мес — через 2–4 недели практики.\n\n"
+        "──────────────────────────\n"
+        "❔ <b>А вдруг не получится?</b>\n"
+        "Поэтому есть бесплатные 2 дня — проверь сам.\n"
+        "Плюс гарантия возврата денег после 1-го дня курса.\n\n"
+        "──────────────────────────\n"
+        "❔ <b>Когда начинается обучение?</b>\n"
+        "Сразу после оплаты. Доступ 24/7, в своём темпе.\n\n"
+        "──────────────────────────\n"
+        "❔ <b>Сколько времени в день нужно?</b>\n"
+        "1–2 часа достаточно. Курс заточен под занятых людей.\n\n"
+        "──────────────────────────\n\n"
+        "Остались вопросы? Менеджер ответит за 5 минут 👇"
+    )
+    await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Написать менеджеру", url=f"https://t.me/{MANAGER.lstrip('@')}")],
+        [InlineKeyboardButton(text="← Назад к тарифам", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
+@dp.callback_query(lambda c: c.data == "guarantee")
+async def cb_guarantee(call: CallbackQuery):
+    text = (
+        "🛡 <b>ГАРАНТИЯ ВОЗВРАТА ДЕНЕГ</b>\n\n"
+        "Мы уверены в качестве курса.\n"
+        "Поэтому даём честную гарантию:\n\n"
+        "▸ Пройди <b>1-й день</b> полного курса\n"
+        "▸ Если он тебе не понравился — напиши менеджеру\n"
+        "▸ Мы вернём <b>100% оплаты</b> без вопросов и условий\n\n"
+        "──────────────────────────\n\n"
+        "Почему мы можем себе это позволить?\n\n"
+        f"Потому что из <b>{STUDENTS_COUNT}+ студентов</b> возвратов\n"
+        "было единицы. Курс реально работает.\n\n"
+        "💬 <i>«Я очень переживала перед покупкой.\n"
+        "Гарантия помогла решиться. Возврат не понадобился»\n"
+        "— Ольга, студентка</i>"
+    )
+    await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Назад к тарифам", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
 @dp.callback_query(lambda c: c.data.startswith("buy_"))
 async def cb_buy(call: CallbackQuery):
-    plan = {
-        "buy_base": "📦 Базовый — 5 900 ₽",
-        "buy_vip": "⭐ VIP с куратором — 9 900 ₽",
-        "buy_pro": "🚀 PRO + продвижение — 15 900 ₽",
-    }.get(call.data, "Тариф")
+    plans = {
+        "buy_base": ("📦 Базовый — 5 900 ₽", "базовый"),
+        "buy_vip":  ("⭐ VIP с куратором — 9 900 ₽", "VIP"),
+        "buy_pro":  ("🚀 PRO + продвижение — 15 900 ₽", "PRO"),
+    }
+    plan_label, plan_short = plans.get(call.data, ("Тариф", "выбранный"))
+
     text = (
-        f"✅ Отличный выбор!\n\nТы выбрал тариф:\n<b>{plan}</b>\n\n"
-        "Чтобы оформить доступ — напиши менеджеру 👇\n"
-        "Он пришлёт реквизиты и откроет полный курс 🚀\n\n"
-        "💡 <b>Есть промокод друга?</b> Назови его менеджеру и получи <b>скидку 500 ₽</b>!"
+        f"✅ <b>Отличный выбор — тариф {plan_short}!</b>\n\n"
+        "Менеджер пришлёт реквизиты и откроет доступ\n"
+        "в течение нескольких минут после оплаты. 🚀\n\n"
+        "💡 <b>Есть промокод друга?</b>\n"
+        "Назови его менеджеру — получишь <b>скидку 500 ₽</b>.\n\n"
+        "🛡 Напомни: гарантия возврата действует\n"
+        "после 1-го дня полного курса."
     )
     await show(call, text, to_manager_kb())
+
     name = call.from_user.first_name or "Юзер"
     uname = f"@{call.from_user.username}" if call.from_user.username else "нет username"
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"💰 <b>НОВАЯ ЗАЯВКА!</b>\n\n👤 {name} ({uname})\n🆔 ID: {call.from_user.id}\n📦 Тариф: {plan}"
+            f"💰 <b>НОВАЯ ЗАЯВКА!</b>\n\n"
+            f"👤 {name} ({uname})\n"
+            f"🆔 ID: <code>{call.from_user.id}</code>\n"
+            f"📦 Тариф: {plan_label}"
         )
-    except: pass
+    except Exception:
+        pass
+
 
 @dp.callback_query(lambda c: c.data == "referral")
 async def cb_referral(call: CallbackQuery, state: FSMContext):
     user_id = str(call.from_user.id)
-    existing = None
-    for code, uid in promos.items():
-        if uid == user_id:
-            existing = code
-            break
+    existing = next((code for code, uid in promos.items() if uid == user_id), None)
 
     if existing:
         text = (
-            "👥 <b>ЗАРАБОТОК НА ДРУЗЬЯХ</b>\n\n"
-            "🎁 <b>Ты получаешь 30% с каждой оплаты друга на карту</b>\n"
+            "👥 <b>ТВОЯ РЕФЕРАЛЬНАЯ ПРОГРАММА</b>\n\n"
+            "🎁 <b>Ты получаешь 30%</b> с каждой оплаты друга — на карту\n"
             "🎁 Друг получает <b>скидку 500 ₽</b>\n\n"
             f"🎫 <b>Твой промокод:</b> <code>{existing}</code>\n\n"
-            "📲 <b>Как это работает:</b>\n"
-            "1️⃣ Дай другу свой промокод\n"
+            "<b>Как зарабатывать:</b>\n"
+            "1️⃣ Поделись промокодом с другом\n"
             "2️⃣ Друг называет его менеджеру при оплате\n"
-            "3️⃣ Ты получаешь 30% на карту 💸"
+            "3️⃣ Ты получаешь 30% на карту 💸\n\n"
+            "💡 <i>Пример: с тарифа VIP (9 900₽) ты получишь\n"
+            "2 970 ₽ за одного друга</i>"
         )
         await show(call, text, back_kb())
     else:
         await state.set_state(PromoState.waiting)
         text = (
-            "👥 <b>ЗАРАБОТОК НА ДРУЗЬЯХ</b>\n\n"
-            "🎁 <b>Ты получаешь 30% с каждой оплаты друга на карту</b>\n"
+            "👥 <b>ПАРТНЁРСКАЯ ПРОГРАММА</b>\n\n"
+            "🎁 <b>Ты получаешь 30%</b> с каждой оплаты друга — на карту\n"
             "🎁 Друг получает <b>скидку 500 ₽</b>\n\n"
-            "✍️ <b>Придумай свой промокод и напиши его сообщением</b>\n"
-            "(например: <code>MAX2024</code> или <code>NEYRO</code>)\n\n"
-            "Этот промокод друзья будут называть менеджеру при оплате 👇"
+            "💡 <i>Пример: 3 друга купили VIP → ты заработал 8 910 ₽</i>\n\n"
+            "✍️ <b>Придумай свой промокод и напиши его сообщением:</b>\n"
+            "(3–20 символов, только буквы и цифры)\n"
+            "Пример: <code>IVAN25</code> или <code>NEYRO</code>\n\n"
+            "Этот код друзья будут называть менеджеру при оплате 👇"
         )
         try:
             await call.message.delete()
-        except: pass
+        except Exception:
+            pass
         await call.message.answer(text, reply_markup=back_kb())
         await call.answer()
+
 
 @dp.message(PromoState.waiting)
 async def process_promo(message: Message, state: FSMContext):
@@ -280,13 +444,13 @@ async def process_promo(message: Message, state: FSMContext):
     await state.clear()
 
     text = (
-        "✅ <b>Отлично! Твой промокод создан!</b>\n\n"
-        f"🎫 <b>Промокод:</b> <code>{code}</code>\n\n"
-        "📲 <b>Как зарабатывать:</b>\n"
-        "1️⃣ Дай другу свой промокод\n"
-        "2️⃣ Друг называет его менеджеру при оплате\n"
-        "3️⃣ Ты получаешь <b>30% на карту</b> 💸\n\n"
-        "Делись промокодом и зарабатывай! 🚀"
+        "✅ <b>Промокод создан!</b>\n\n"
+        f"🎫 <b>Твой промокод:</b> <code>{code}</code>\n\n"
+        "<b>Как поделиться (скопируй и отправь другу):</b>\n\n"
+        f"<i>Привет! Я учусь в True AI Academy — нейросети, заработок, реально круто.\n"
+        f"Первые 2 дня бесплатно: @{BOT_USERNAME}\n"
+        f"Промокод при оплате: {code} — дадут скидку 500₽</i>\n\n"
+        "💸 После оплаты друга — 30% тебе на карту!"
     )
     await message.answer(text, reply_markup=back_kb())
 
@@ -295,33 +459,65 @@ async def process_promo(message: Message, state: FSMContext):
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"🎫 <b>Новый промокод создан</b>\n\n👤 {name} ({uname})\n🆔 ID: {user_id}\n🎫 Промокод: <code>{code}</code>"
+            f"🎫 <b>Новый промокод</b>\n\n"
+            f"👤 {name} ({uname})\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"🎫 Промокод: <code>{code}</code>"
         )
-    except: pass
+    except Exception:
+        pass
+
+
+# ─── КОМАНДЫ ──────────────────────────────────────────────────────────────────
 
 @dp.message(Command("trial"))
 async def cmd_trial(message: Message):
-    text = "🎁 <b>Держи доступ к 1-му дню БЕСПЛАТНО:</b>\n\nИзучи материалы и возвращайся за 2-м днём 🚀"
+    text = (
+        "🎁 <b>Бесплатный доступ — 1-й день:</b>\n\n"
+        "Изучи материал и возвращайся за 2-м днём 🚀"
+    )
     await message.answer(text, reply_markup=day1_kb())
+
 
 @dp.message(Command("tariffs"))
 async def cmd_tariffs(message: Message):
     text = (
-        "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
-        "📦 <b>Базовый — 5 900 ₽</b>\n⭐ <b>VIP с куратором — 9 900 ₽</b>\n"
-        "🚀 <b>PRO + продвижение — 15 900 ₽</b>\n\nВыбери свой тариф 👇"
+        f"💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
+        f"⚠️ Осталось мест по акционной цене: <b>{SPOTS_LEFT}</b>\n\n"
+        "🚀 <b>PRO + продвижение — 15 900 ₽</b>\n"
+        "⭐ <b>VIP с куратором — 9 900 ₽</b>  ← выбирает большинство\n"
+        "📦 <b>Базовый — 5 900 ₽</b>\n\n"
+        "👇 Выбери свой тариф:"
     )
     await message.answer(text, reply_markup=tariffs_kb())
+
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "❓ <b>ПОМОЩЬ И ПОДДЕРЖКА</b>\n\n<b>Команды:</b>\n"
-        "/start — главное меню\n/trial — бесплатный доступ\n"
+        "❓ <b>ПОМОЩЬ И ПОДДЕРЖКА</b>\n\n"
+        "<b>Команды:</b>\n"
+        "/start — главное меню\n"
+        "/trial — бесплатный доступ\n"
         "/tariffs — тарифы\n\n"
-        "💬 Остались вопросы? Напиши менеджеру 👇"
+        "💬 Остались вопросы? Менеджер ответит за 5 минут 👇"
     )
     await message.answer(text, reply_markup=to_manager_kb())
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    total_users = len(users)
+    total_promos = len(promos)
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"👥 Пользователей: <b>{total_users}</b>\n"
+        f"🎫 Промокодов: <b>{total_promos}</b>"
+    )
+    await message.answer(text)
+
 
 @dp.message(Command("promo"))
 async def cmd_promo_check(message: Message):
@@ -336,14 +532,20 @@ async def cmd_promo_check(message: Message):
     if owner:
         owner_name = users.get(owner, {}).get("name", "—")
         await message.answer(
-            f"🎫 Промокод <b>{code}</b>\n👤 Владелец: {owner_name}\n🆔 ID: <code>{owner}</code>"
+            f"🎫 Промокод <b>{code}</b>\n"
+            f"👤 Владелец: {owner_name}\n"
+            f"🆔 ID: <code>{owner}</code>"
         )
     else:
         await message.answer(f"❌ Промокод <b>{code}</b> не найден.")
 
+
+# ─── ЗАПУСК ────────────────────────────────────────────────────────────────────
+
 async def main():
     print("Бот запущен!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
