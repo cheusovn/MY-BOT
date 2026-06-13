@@ -6,6 +6,7 @@ import random
 import string
 import time
 from datetime import datetime, timedelta
+import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import Command, CommandStart
@@ -13,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 817730727
@@ -31,7 +33,16 @@ PRICE_VIP = (9900, 4900)
 PRICE_PRO = (14900, 7900)
 
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+
+# Увеличенные таймауты для стабильной работы на Amvera
+_session = AiohttpSession(
+    timeout=aiohttp.ClientTimeout(total=60, connect=10, sock_read=30)
+)
+bot = Bot(
+    token=BOT_TOKEN,
+    session=_session,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 dp = Dispatcher(storage=MemoryStorage())
 
 DATA_DIR = "/data" if os.path.exists("/data") else "."
@@ -271,7 +282,6 @@ async def cmd_start(message: Message, state: FSMContext):
         except Exception:
             pass
 
-    # Первый экран — boldest hook + social proof + qualification
     text = (
         f"👋 <b>{name}, привет!</b>\n\n"
         "Пока большинство ещё «думают попробовать» —\n"
@@ -909,12 +919,22 @@ async def follow_up_scheduler():
                 pass
 
 
-# ─── ЗАПУСК ─────────────────────────────────────────────────────────────────────────────────
+# ─── ЗАПУСК с retry при сетевых сбоях ─────────────────────────────────────────────────────────
 
 async def main():
     print("Бот запущен!")
     asyncio.create_task(follow_up_scheduler())
-    await dp.start_polling(bot)
+
+    retry_delay = 5
+    while True:
+        try:
+            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        except Exception as e:
+            logging.error(f"Polling error: {e}. Reconnect in {retry_delay}s...")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60)
+        else:
+            break
 
 
 if __name__ == "__main__":
