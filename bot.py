@@ -216,20 +216,81 @@ XP_RULES = {
 }
 
 # ─── AI-НАСТАВНИК: проверка домашних работ ─────────────────────────────────────────────────────────
-# Ключ ТОЛЬКО из окружения (никогда не хардкодим). По умолчанию — OpenRouter.
-# Поддерживает и OpenRouter (OPENROUTER_API_KEY), и OpenAI (OPENAI_API_KEY).
-AI_API_KEY = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-_DEFAULT_URL = (
-    "https://openrouter.ai/api/v1/chat/completions"
-    if os.environ.get("OPENROUTER_API_KEY")
-    else "https://api.openai.com/v1/chat/completions"
-)
-AI_API_URL = os.environ.get("AI_API_URL", _DEFAULT_URL)
-# Vision-модель. На OpenRouter формат "openai/gpt-4o-mini"; на OpenAI — "gpt-4o-mini".
-AI_MODEL = os.environ.get(
-    "AI_MODEL",
-    "openai/gpt-4o-mini" if os.environ.get("OPENROUTER_API_KEY") else "gpt-4o-mini",
-)
+# Каскад провайдеров с бесплатными лимитами. Ключи ТОЛЬКО из окружения (никогда не хардкодим).
+# Бот пробует провайдеров по очереди: упёрся в лимит/ошибку → автоматически следующий.
+# Активируются только те, чей ключ задан в env. Все эндпоинты OpenAI-совместимые.
+#
+# Env-переменные ключей (добавляй любые — чем больше, тем устойчивее):
+#   OPENROUTER_API_KEY  — openrouter.ai (много :free vision-моделей)
+#   GROQ_API_KEY        — groq.com (быстрый бесплатный тир, Llama 4 vision)
+#   GEMINI_API_KEY      — Google AI Studio (бесплатный тир, Gemini vision)
+#   MISTRAL_API_KEY     — mistral.ai (бесплатный тир, Pixtral vision)
+#   OPENAI_API_KEY      — OpenAI (платно, как последний резерв)
+
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
+MISTRAL_KEY = os.environ.get("MISTRAL_API_KEY", "")
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+
+def _build_providers():
+    """Упорядоченный список попыток: сначала бесплатные тиры, платное — в конце."""
+    p = []
+    # 1) OpenRouter — несколько :free vision-моделей подряд (у каждой свой лимит)
+    if OPENROUTER_KEY:
+        for model in (
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "qwen/qwen2.5-vl-72b-instruct:free",
+        ):
+            p.append({
+                "name": f"OpenRouter:{model}", "vision": True,
+                "url": "https://openrouter.ai/api/v1/chat/completions",
+                "key": OPENROUTER_KEY,
+                "model": model,
+                "extra": {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"},
+            })
+    # 2) Google Gemini (бесплатный тир, vision)
+    if GEMINI_KEY:
+        p.append({
+            "name": "Gemini:flash", "vision": True,
+            "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "key": GEMINI_KEY, "model": "gemini-2.0-flash", "extra": {},
+        })
+    # 3) Groq (бесплатный тир, Llama 4 — vision)
+    if GROQ_KEY:
+        p.append({
+            "name": "Groq:llama4", "vision": True,
+            "url": "https://api.groq.com/openai/v1/chat/completions",
+            "key": GROQ_KEY, "model": "meta-llama/llama-4-scout-17b-16e-instruct", "extra": {},
+        })
+    # 4) Mistral (бесплатный тир, Pixtral — vision)
+    if MISTRAL_KEY:
+        p.append({
+            "name": "Mistral:pixtral", "vision": True,
+            "url": "https://api.mistral.ai/v1/chat/completions",
+            "key": MISTRAL_KEY, "model": "pixtral-12b-2409", "extra": {},
+        })
+    # 5) OpenRouter платная резервная (если ключ есть)
+    if OPENROUTER_KEY:
+        p.append({
+            "name": "OpenRouter:gpt-4o-mini", "vision": True,
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "key": OPENROUTER_KEY, "model": "openai/gpt-4o-mini",
+            "extra": {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"},
+        })
+    # 6) OpenAI напрямую (платно, последний резерв)
+    if OPENAI_KEY:
+        p.append({
+            "name": "OpenAI:gpt-4o-mini", "vision": True,
+            "url": "https://api.openai.com/v1/chat/completions",
+            "key": OPENAI_KEY, "model": "gpt-4o-mini", "extra": {},
+        })
+    return p
+
+
+AI_PROVIDERS = _build_providers()
 
 HW_SYSTEM_PROMPT = (
     "Ты — доброжелательный, но требовательный наставник курса по нейросетям "
@@ -245,18 +306,9 @@ HW_SYSTEM_PROMPT = (
 )
 
 
-async def ai_review(user_text: str, image_b64: str = None) -> str:
-    """Запрос к AI-модели. Возвращает текст разбора или None при ошибке/отсутствии ключа."""
-    if not AI_API_KEY:
-        return None
-    content = [{"type": "text", "text": user_text or "Проверь мою работу по курсу нейросетей."}]
-    if image_b64:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
-        })
+async def _try_provider(prov, content) -> str:
     payload = {
-        "model": AI_MODEL,
+        "model": prov["model"],
         "messages": [
             {"role": "system", "content": HW_SYSTEM_PROMPT},
             {"role": "user", "content": content},
@@ -264,23 +316,40 @@ async def ai_review(user_text: str, image_b64: str = None) -> str:
         "max_tokens": 700,
         "temperature": 0.6,
     }
-    headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
-    if "openrouter" in AI_API_URL:
-        # Необязательные, но рекомендованные OpenRouter заголовки атрибуции
-        headers["HTTP-Referer"] = "https://t.me/Trueman_ai_bot"
-        headers["X-Title"] = "True AI Academy"
-    try:
-        timeout = aiohttp.ClientTimeout(total=60)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post(AI_API_URL, json=payload, headers=headers) as r:
-                data = await r.json()
-                if r.status != 200:
-                    logging.error(f"AI review HTTP {r.status}: {data}")
-                    return None
-                return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logging.error(f"AI review error: {e}")
+    headers = {"Authorization": f"Bearer {prov['key']}", "Content-Type": "application/json"}
+    headers.update(prov.get("extra", {}))
+    timeout = aiohttp.ClientTimeout(total=45)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with s.post(prov["url"], json=payload, headers=headers) as r:
+            data = await r.json()
+            if r.status != 200:
+                raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+            return data["choices"][0]["message"]["content"].strip()
+
+
+async def ai_review(user_text: str, image_b64: str = None) -> str:
+    """Перебирает провайдеров по очереди (бесплатные тиры → платные). None, если все недоступны."""
+    if not AI_PROVIDERS:
         return None
+    content = [{"type": "text", "text": user_text or "Проверь мою работу по курсу нейросетей."}]
+    if image_b64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+        })
+    for prov in AI_PROVIDERS:
+        if image_b64 and not prov.get("vision"):
+            continue
+        try:
+            result = await _try_provider(prov, content)
+            if result:
+                logging.info(f"AI review OK via {prov['name']}")
+                return result
+        except Exception as e:
+            logging.warning(f"AI provider {prov['name']} failed: {e} → next")
+            continue
+    logging.error("AI review: all providers exhausted")
+    return None
 
 
 def _ensure_game(uid: str):
