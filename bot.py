@@ -34,11 +34,6 @@ WELCOME_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome.
 
 STUDENTS_COUNT = "347"
 
-# Цены: anchor (обычная) → текущая (акция)
-PRICE_BASE = (5900, 2900)
-PRICE_VIP = (9900, 4900)
-PRICE_PRO = (14900, 7900)
-
 logging.basicConfig(level=logging.INFO)
 
 # Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
@@ -186,15 +181,15 @@ GOAL_HOOKS = {
 # rub_old / rub_now — для отображения. stars — цена в Telegram Stars (оплата без ИП/самозанятого).
 # Курс ⭐: ≈ 1 Star ≈ 1.7 ₽ (Telegram удерживает комиссию, выплата через Fragment).
 TARIFFS = {
-    "base": {"label": "📦 Базовый", "old": 5900, "now": 2970, "stars": 1750,
+    "base": {"label": "📦 Базовый", "old": 5900, "now": 2970, "floor": 1990, "stars": 1750,
              "perks": "Все 7 дней курса + доступ навсегда"},
-    "vip":  {"label": "⭐ VIP с куратором", "old": 9900, "now": 4970, "stars": 2900,
+    "vip":  {"label": "⭐ VIP с куратором", "old": 9900, "now": 4970, "floor": 3470, "stars": 2900,
              "perks": "Все 7 дней + личный куратор + чат 24/7 + бонусы на 6 470 ₽"},
-    "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "stars": 4690,
+    "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "floor": 5970, "stars": 4690,
              "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM"},
     # Технический тариф для проверки боевой оплаты ЮKassa. Доступен только админу
     # через /paytest, в меню тарифов НЕ показывается. После оплаты выдаёт 1-й день.
-    "test": {"label": "🧪 Тест-доступ (1 день)", "old": 100, "now": 100, "stars": 1,
+    "test": {"label": "🧪 Тест-доступ (1 день)", "old": 100, "now": 100, "floor": 100, "stars": 1,
              "perks": "Проверочный платёж — открывает доступ к 1-му дню курса"},
 }
 
@@ -687,15 +682,19 @@ def shop_discount(uid: str) -> int:
 
 
 def total_discount(uid: str) -> int:
-    """Суммарная скидка ₽: прогресс + колесо + магазин."""
-    return active_discount(uid) + wheel_discount_active(uid) + shop_discount(uid)
+    """Личная скидка ₽ — БЕРЁМ МАКСИМАЛЬНУЮ из источников (прогресс / колесо / магазин),
+    а НЕ сумму. Складывание трёх скидок раньше обрушивало цену в пол и стирало
+    разницу между тарифами (VIP = Базовый). Теперь действует одна — самая выгодная."""
+    return max(active_discount(uid), wheel_discount_active(uid), shop_discount(uid))
 
 
 def final_price(uid: str, plan_key: str) -> int:
-    """Финальная цена тарифа ₽ с учётом личной скидки (минимум 990 ₽)."""
+    """Финальная цена тарифа ₽ с учётом личной скидки, но не ниже «пола» тарифа —
+    чтобы тарифы не схлопывались в одну сумму."""
     t = TARIFFS.get(plan_key, TARIFFS["vip"])
     refresh_discount(uid)
-    return max(990, t["now"] - total_discount(uid))
+    floor = t.get("floor", max(990, int(t["now"] * 0.6)))
+    return max(floor, t["now"] - total_discount(uid))
 
 
 # ─── МЕХАНИКА №1: челлендж дня (тема ротируется по дате — без затрат на AI) ─────────────────────────
@@ -850,7 +849,8 @@ def goal_kb():
     ])
 
 
-def start_kb():
+def start_kb(uid: str = None):
+    # Главный экран: ключевые действия + геймификация сразу на виду.
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤯 Кинь фото — нейросеть тебя удивит (бесплатно)", callback_data="wow")],
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня доступа", callback_data="day1")],
@@ -1202,14 +1202,14 @@ async def cb_special_tariffs(call: CallbackQuery):
 
     deadline = (datetime.now() + timedelta(hours=24)).strftime("%H:%M %d.%m")
 
-    # Суммарная личная скидка (прогресс + колесо + магазин XP)
+    # Личная скидка (максимальная из источников) с учётом пола тарифа
     refresh_discount(user_id)
-    total_disc = total_discount(user_id)
     base_vip = TARIFFS["vip"]["now"]
-    final_vip = max(990, base_vip - total_disc)
-    if total_disc > 0:
+    final_vip = final_price(user_id, "vip")
+    real_disc = base_vip - final_vip
+    if real_disc > 0:
         disc_block = (
-            f"🎯 <b>ТВОЯ ЛИЧНАЯ СКИДКА: −{total_disc} ₽</b>\n"
+            f"🎯 <b>ТВОЯ ЛИЧНАЯ СКИДКА: −{real_disc} ₽</b>\n"
             f"VIP для тебя: <s>{base_vip} ₽</s> → <b>{final_vip} ₽</b>\n"
             "⏳ Скидка сгорает вместе с предложением — не упусти!\n\n"
         )
@@ -1225,7 +1225,7 @@ async def cb_special_tariffs(call: CallbackQuery):
         "━━━━━━━━━━━━━━━━\n"
         "⭐ <b>VIP С КУРАТОРОМ</b>\n"
         "<s>9 900 ₽</s> → <b>4 970 ₽</b>  (экономия 4 930 ₽)\n"
-        "это <b>16 ₽ в день</b> — дешевле чашки кофе\n\n"
+        "Один раз — и доступ остаётся навсегда.\n\n"
         "Что внутри:\n"
         "✅ Все 7 дней курса + доступ навсегда\n"
         "✅ Личный куратор + разбор твоих работ\n"
@@ -1259,7 +1259,7 @@ async def cb_tariffs(call: CallbackQuery):
         f"{social_proof()}\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "⭐ <b>VIP С КУРАТОРОМ</b>  ← берут 7 из 10\n"
-        "<s>9 900 ₽</s> → <b>4 970 ₽</b>  или 16 ₽/день\n"
+        "<s>9 900 ₽</s> → <b>4 970 ₽</b>  · один раз, навсегда\n"
         "━━━━━━━━━━━━━━━━\n"
         "✅ Все 7 дней курса\n"
         "✅ Личный куратор + разбор твоих работ\n"
@@ -1268,7 +1268,7 @@ async def cb_tariffs(call: CallbackQuery):
         "🎁 + Бонусы на 6 470 ₽ бесплатно\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "🚀 <b>PRO + ПРОДВИЖЕНИЕ</b>\n"
-        "<s>14 900 ₽</s> → <b>7 970 ₽</b>  или 26 ₽/день\n"
+        "<s>14 900 ₽</s> → <b>7 970 ₽</b>  · один раз, навсегда\n"
         "━━━━━━━━━━━━━━━━\n"
         "✅ Всё из VIP\n"
         "💼 Где брать заказы — площадки + схемы\n"
@@ -1277,7 +1277,7 @@ async def cb_tariffs(call: CallbackQuery):
         "📱 SMM с нуля — до 1 млн просмотров\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "📦 <b>БАЗОВЫЙ</b>\n"
-        "<s>5 900 ₽</s> → <b>2 970 ₽</b>  или 10 ₽/день\n"
+        "<s>5 900 ₽</s> → <b>2 970 ₽</b>  · один раз, навсегда\n"
         "━━━━━━━━━━━━━━━━\n"
         "✅ Все 7 дней курса\n"
         "✅ Доступ навсегда\n"
@@ -1441,9 +1441,9 @@ async def cb_card(call: CallbackQuery):
     name = call.from_user.first_name or "Юзер"
     uname = f"@{call.from_user.username}" if call.from_user.username else "нет username"
     goal = GOAL_LABELS.get(users.get(user_id, {}).get("goal", ""), "—")
-    total_disc = total_discount(user_id)
-    final = max(990, t["now"] - total_disc)
-    disc_note = f" (личная скидка −{total_disc} ₽)" if total_disc else ""
+    final = final_price(user_id, plan_key)
+    real_disc = t["now"] - final
+    disc_note = f" (личная скидка −{real_disc} ₽)" if real_disc > 0 else ""
     wheel_prize = _ensure_game(user_id).get("wheel", "")
     prize_note = f"\n🎰 Приз колеса: {wheel_prize}" if wheel_prize else ""
     try:
@@ -2015,8 +2015,8 @@ async def cb_wheel_spin(call: CallbackQuery):
     extra = ""
     if prize["type"] == "discount":
         extra = (
-            f"\n\n💸 Скидка <b>{prize['value']} ₽</b> уже закреплена за тобой "
-            "и суммируется с твоей скидкой за прогресс. ⏳ Действует 24 часа."
+            f"\n\n💸 Скидка <b>{prize['value']} ₽</b> закреплена за тобой. "
+            "Применится автоматически, если она выгоднее твоей текущей. ⏳ Действует 24 часа."
         )
 
     await show(
@@ -2314,8 +2314,8 @@ async def cb_shop_buy(call: CallbackQuery):
         result = (
             f"✅ <b>Куплено: {label}</b>\n\n"
             f"💸 Скидка <b>{val} ₽</b> закреплена за тобой и применится к тарифу.\n"
-            f"Суммарная скидка из магазина: <b>{shop_discount(user_id)} ₽</b>.\n\n"
-            "Она суммируется со скидкой за прогресс при оплате."
+            f"Твоя постоянная скидка из магазина: <b>{shop_discount(user_id)} ₽</b>.\n\n"
+            "При оплате применяется самая выгодная из твоих скидок."
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💰 К тарифам", callback_data="tariffs")],
