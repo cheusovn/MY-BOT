@@ -175,6 +175,9 @@ TARIFFS = {
 # Если не задан — кнопка оплаты картой уходит на менеджера (как раньше).
 YOOKASSA_TOKEN = os.environ.get("YOOKASSA_PROVIDER_TOKEN", "")
 YOOKASSA_TEST = ":TEST:" in YOOKASSA_TOKEN
+# Система налогообложения для чека: 1=ОСН, 2=УСН доходы, 3=УСН доходы-расходы,
+# 4=ЕНВД, 5=ЕСХН, 6=Патент. По умолчанию — УСН доходы.
+YOOKASSA_TAX_SYSTEM = int(os.environ.get("YOOKASSA_TAX_SYSTEM", "2"))
 
 # ─── АНАЛИТИКА: лог воронки ───────────────────────────────────────────────────────────────────────
 EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
@@ -1044,11 +1047,12 @@ async def cb_yookassa(call: CallbackQuery):
     # Чек для 54-ФЗ (нужен, если в магазине ЮKassa включена фискализация)
     provider_data = json.dumps({
         "receipt": {
+            "tax_system_code": YOOKASSA_TAX_SYSTEM,  # 2 = УСН доходы (по умолчанию)
             "items": [{
                 "description": f"{t['label']} — TRUE AI ACADEMY"[:128],
                 "quantity": "1.00",
                 "amount": {"value": f"{t['now']}.00", "currency": "RUB"},
-                "vat_code": 1,
+                "vat_code": 1,                        # 1 = Без НДС (на УСН)
                 "payment_mode": "full_payment",
                 "payment_subject": "service",
             }],
