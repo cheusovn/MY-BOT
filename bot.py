@@ -36,6 +36,10 @@ IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
 
 STUDENTS_COUNT = "347"
 
+# 2-й день курса открывается только спустя это время после старта 1-го дня
+# (даём материалу «улечься» — лучше усваивается, выше доходимость).
+DAY2_COOLDOWN = 12 * 3600  # секунд
+
 logging.basicConfig(level=logging.INFO)
 
 # Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
@@ -1164,6 +1168,39 @@ async def cb_day1(call: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "day2")
 async def cb_day2(call: CallbackQuery):
     user_id = str(call.from_user.id)
+
+    # ─── Гейт: 2-й день открывается только через 12 ч после старта 1-го ───
+    day1_at = users.get(user_id, {}).get("day1_at")
+    if not day1_at:
+        await show_img(
+            call, "day1.jpg",
+            "🔒 <b>Сначала — первый день</b>\n\n"
+            "2-й урок открывается уже после первого.\n"
+            "Начни с него — это бесплатно 👇",
+            day1_kb(),
+        )
+        return
+    left = DAY2_COOLDOWN - (now_ts() - day1_at)
+    if left > 0:
+        when = f"~{int((left + 3599) // 3600)} ч" if left >= 3600 else f"~{max(1, int((left + 59) // 60))} мин"
+        unlock = datetime.fromtimestamp(day1_at + DAY2_COOLDOWN).strftime("%H:%M %d.%m")
+        await show(
+            call,
+            "🔒 <b>2-й день откроется чуть позже</b>\n\n"
+            "Я специально сделал паузу: дай материалу\n"
+            "первого дня улечься — так усвоится в разы лучше.\n\n"
+            f"⏳ Откроется через <b>{when}</b> (в {unlock}).\n"
+            "Я напомню сам, как будет готово 🙂\n\n"
+            "А пока можно не скучать 👇",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✨ Оживить своё фото (бесплатно)", callback_data="wow")],
+                [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
+                [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+        return
+
     set_stage(user_id, "day2")
     track("day2", user_id)
     add_xp(user_id, "day2")
@@ -3045,14 +3082,14 @@ async def follow_up_scheduler():
                         ]), "fu_wow")
                     continue
 
-                # FU2: day1, не пошёл в day2 — через 4ч
+                # FU2: 1-й день пройден и прошло 12 ч — 2-й день открылся, зовём продолжить
                 if (stage == "day1" and not data.get("fu_day1")
-                        and ts - data.get("day1_at", ts) > 4 * 3600):
+                        and ts - data.get("day1_at", ts) > DAY2_COOLDOWN):
                     await _fu_send(uid,
-                        "🔥 <b>Как первый день?</b>\n\n"
-                        "На 2-м дне — где именно лежат деньги в AI,\n"
-                        "плюс закрытое предложение для дошедших.\n\n"
-                        "👇 Продолжить:",
+                        "🎓 <b>2-й день открылся!</b>\n\n"
+                        "Сутки почти прошли — самое время продолжить.\n"
+                        "Сегодня про то, как превратить навык в деньги.\n\n"
+                        "👇 Открыть второй день:",
                         day2_kb(), "fu_day1")
                     continue
 
