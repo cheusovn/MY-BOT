@@ -216,10 +216,20 @@ XP_RULES = {
 }
 
 # ─── AI-НАСТАВНИК: проверка домашних работ ─────────────────────────────────────────────────────────
-# Ключ берётся из окружения. Если не задан — бот мягко направит на куратора.
-AI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-AI_API_URL = os.environ.get("AI_API_URL", "https://api.openai.com/v1/chat/completions")
-AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+# Ключ ТОЛЬКО из окружения (никогда не хардкодим). По умолчанию — OpenRouter.
+# Поддерживает и OpenRouter (OPENROUTER_API_KEY), и OpenAI (OPENAI_API_KEY).
+AI_API_KEY = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+_DEFAULT_URL = (
+    "https://openrouter.ai/api/v1/chat/completions"
+    if os.environ.get("OPENROUTER_API_KEY")
+    else "https://api.openai.com/v1/chat/completions"
+)
+AI_API_URL = os.environ.get("AI_API_URL", _DEFAULT_URL)
+# Vision-модель. На OpenRouter формат "openai/gpt-4o-mini"; на OpenAI — "gpt-4o-mini".
+AI_MODEL = os.environ.get(
+    "AI_MODEL",
+    "openai/gpt-4o-mini" if os.environ.get("OPENROUTER_API_KEY") else "gpt-4o-mini",
+)
 
 HW_SYSTEM_PROMPT = (
     "Ты — доброжелательный, но требовательный наставник курса по нейросетям "
@@ -255,6 +265,10 @@ async def ai_review(user_text: str, image_b64: str = None) -> str:
         "temperature": 0.6,
     }
     headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
+    if "openrouter" in AI_API_URL:
+        # Необязательные, но рекомендованные OpenRouter заголовки атрибуции
+        headers["HTTP-Referer"] = "https://t.me/Trueman_ai_bot"
+        headers["X-Title"] = "True AI Academy"
     try:
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as s:
