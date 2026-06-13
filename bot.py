@@ -5,6 +5,7 @@ import logging
 import random
 import string
 import time
+import base64
 import aiohttp
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
@@ -25,6 +26,7 @@ BOT_USERNAME = "Trueman_ai_bot"
 TRIAL_DAY_1 = "https://t.me/+5ep9DPf7eNMzZjdi"
 TRIAL_DAY_2 = "https://t.me/+SpoNR-ahkJFiZTJi"
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 MANAGER = "@nikolay_cheusov"
 WELCOME_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome.jpg")
 
@@ -229,12 +231,13 @@ BADGES = {
     "streak7":      "⚡ Серия 7 дней",
     "challenger":   "🥊 Боец челленджа",
     "lucky":        "🎰 Крутанул колесо удачи",
+    "wonder":       "🪄 Первое AI-чудо",
 }
 
 XP_RULES = {
     "day1": 30, "day2": 50, "tariffs": 20,
     "free_gift": 15, "referral": 25, "daily": 10, "buy": 100,
-    "challenge": 30,
+    "challenge": 30, "wow": 20,
 }
 
 # ─── СКИДКА ЗА ПРОГРЕСС (механика №6): чем больше XP — тем больше личная скидка ──────────────────
@@ -315,6 +318,91 @@ WHEEL_SYSTEM = (
     "удачи. В 1-2 тёплых предложениях на русском поздравь и свяжи приз с его целью. "
     "Только HTML <b></b>, без markdown. Без выдуманных фактов о человеке."
 )
+
+
+# ─── VISION через OpenRouter (для «первого AI-чуда») ────────────────────────────────────────────────
+# Бесплатные vision-модели OpenRouter → дешёвый платный резерв. Только OpenRouter, без Google напрямую.
+AI_VISION_MODELS = [
+    "meta-llama/llama-3.2-11b-vision-instruct:free",
+    "qwen/qwen2.5-vl-72b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",  # это запрос в OpenRouter, не напрямую в Google
+]
+AI_VISION_PAID = "openai/gpt-4o-mini"
+
+WOW_SYSTEM = (
+    "Ты — AI-наставник школы True AI Academy. Ученик прислал своё фото (или фото друга/брата) "
+    "для первого знакомства с нейросетями. Посмотри на фото и составь ОДИН готовый промпт для "
+    "нейросети-генератора изображений, который эффектно преобразит этот кадр (например: герой "
+    "комикса, Pixar-стиль, деловой портрет, киноплакат — выбери уместное по фото). "
+    "Ответь на русском СТРОГО так (HTML <b></b> и <code></code>, без markdown ** **):\n\n"
+    "<b>1 короткая фраза-комплимент к фото</b>\n\n"
+    "📋 <b>Твой промпт:</b>\n<code>...промпт на английском...</code>\n\n"
+    "<b>Вставь его вместе с фото в бота по кнопке ниже — получишь результат за 30 секунд.</b>\n\n"
+    "Будь тёплым и кратким. Никаких выдуманных фактов о человеке."
+)
+
+
+async def ai_vision(system: str, user_text: str, image_b64: str, max_tokens: int = 350) -> str:
+    """Vision-вызов через OpenRouter: free-модели → дешёвый резерв. None, если недоступно."""
+    if not OPENROUTER_KEY:
+        return None
+    content = [
+        {"type": "text", "text": user_text},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+    ]
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    headers.update(OPENROUTER_EXTRA)
+    timeout = aiohttp.ClientTimeout(total=45)
+    for model in AI_VISION_MODELS + [AI_VISION_PAID]:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
+                    data = await r.json()
+                    if r.status != 200:
+                        raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+                    out = data["choices"][0]["message"]["content"].strip()
+                    if out:
+                        logging.info(f"AI vision OK via OpenRouter:{model}")
+                        return out
+        except Exception as e:
+            logging.warning(f"OpenRouter vision {model} failed: {e} → next")
+            continue
+    logging.error("AI vision: all OpenRouter models exhausted")
+    return None
+
+
+# Готовый пул заданий+промптов (нулевой расход / fallback, если AI недоступен или прислали текст)
+WOW_TASKS = [
+    {
+        "task": "Сфоткай себя, друга или брата по пояс — и пришли фото сюда.",
+        "prompt": "professional cinematic portrait, superhero style, dramatic lighting, "
+                  "highly detailed, 8k, keep the face identical to the photo",
+    },
+    {
+        "task": "Пришли любое своё фото (или фото друга) — превратим в Pixar-персонажа.",
+        "prompt": "3D Pixar / Disney animation style character, cute, big expressive eyes, "
+                  "soft studio lighting, keep the face recognizable from the photo",
+    },
+    {
+        "task": "Скинь фото в полный рост или по пояс — сделаем деловой портрет на аватарку.",
+        "prompt": "clean professional business headshot, neutral studio background, "
+                  "soft lighting, confident look, LinkedIn style, keep the face identical",
+    },
+]
+
+
+def wow_task():
+    idx = datetime.now().timetuple().tm_yday % len(WOW_TASKS)
+    return WOW_TASKS[idx]
 
 
 def _ensure_game(uid: str):
@@ -606,6 +694,10 @@ class ChallengeState(StatesGroup):
     waiting = State()
 
 
+class WowState(StatesGroup):
+    waiting = State()
+
+
 # ─── КЛАВИАТУРЫ ─────────────────────────────────────────────────────────────────────────────────
 
 def goal_kb():
@@ -618,6 +710,7 @@ def goal_kb():
 
 def start_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🪄 Первое AI-чудо за 2 минуты", callback_data="wow")],
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня доступа", callback_data="day1")],
         [InlineKeyboardButton(text="🔥 ПОДАРОК: 100+ AI бесплатно", callback_data="free_gift")],
         [
@@ -818,10 +911,11 @@ async def cb_goal(call: CallbackQuery):
     text = (
         hook +
         "━━━━━━━━━━━━━━━━\n"
-        "🎓 <b>Начни прямо сейчас — без оплаты и риска:</b>\n\n"
-        "Я открою тебе <b>2 дня полного курса</b>.\n"
-        "Или забери <b>100+ нейросетей в подарок</b> —\n"
-        "это реальный инструментарий, не триал.\n\n"
+        "🪄 <b>Лучший первый шаг — сделай AI-чудо за 2 минуты.</b>\n"
+        "Пришли фото — я подберу промпт, и сам увидишь,\n"
+        "что нейросети проще, чем кажется.\n\n"
+        "🎓 А дальше — <b>2 дня полного курса бесплатно</b>\n"
+        "или <b>100+ нейросетей в подарок</b>.\n\n"
         "👇 Что выберешь?"
     )
     await show(call, text, start_kb())
@@ -1521,6 +1615,140 @@ async def cb_wheel_spin(call: CallbackQuery):
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
         ]),
     )
+
+
+# ─── ПЕРВОЕ AI-ЧУДО ЗА 2 МИНУТЫ (онбординг-вау: фото → персональный промпт → GIFT-бот → канал) ──────
+
+def wow_cancel_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✖️ Отмена", callback_data="wow_cancel")],
+    ])
+
+
+@dp.callback_query(lambda c: c.data == "wow")
+async def cb_wow(call: CallbackQuery, state: FSMContext):
+    user_id = str(call.from_user.id)
+    track("wow_open", user_id)
+    await state.set_state(WowState.waiting)
+    task = wow_task()
+    text = (
+        "🪄 <b>ТВОЁ ПЕРВОЕ AI-ЧУДО ЗА 2 МИНУТЫ</b>\n\n"
+        "Сейчас сам убедишься: нейросети — это <b>проще, чем кажется.</b>\n\n"
+        f"📸 <b>Задание:</b>\n{task['task']}\n\n"
+        "Я <b>посмотрю на твоё фото</b> и подберу персональный промпт —\n"
+        "а потом покажу, где превратить это в готовую картинку.\n\n"
+        "👇 Пришли фото прямо сюда:"
+    )
+    await show(call, text, wow_cancel_kb())
+
+
+@dp.callback_query(lambda c: c.data == "wow_cancel")
+async def cb_wow_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show(call, "Окей, отложили. Это чудо ждёт тебя в меню 🪄", start_kb())
+
+
+async def _send_channel_later(uid: int, delay: int = 300):
+    """Через 5 минут после первого чуда — мягко зовём на канал с бесплатными гайдами."""
+    await asyncio.sleep(delay)
+    if not CHANNEL_LINK:
+        return
+    try:
+        await bot.send_message(
+            uid,
+            "📚 <b>Кстати — пока не забыл.</b>\n\n"
+            "У меня на канале <b>куча бесплатных гайдов</b> по нейросетям:\n"
+            "промпты, фишки и разборы, которые экономят часы.\n\n"
+            "Загляни — там есть что забрать бесплатно 👇",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📚 Открыть канал с гайдами", url=CHANNEL_LINK)],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logging.warning(f"channel nudge failed for {uid}: {e}")
+
+
+def wow_result_kb():
+    """После результата: ведём ТОЛЬКО на GIFT-бот (партнёрка), затем дальше по воронке."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Сгенерировать прямо сейчас (бесплатно)", url=GIFT_LINK)],
+        [InlineKeyboardButton(text="🚀 А тут возможностей ещё больше — 2 дня бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
+@dp.message(WowState.waiting)
+async def process_wow(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    has_photo = bool(message.photo)
+    user_text = (message.caption or message.text or "").strip()
+    task = wow_task()
+
+    # Команда — выходим из режима
+    if not has_photo and user_text.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили чудо. Команда ниже 👇", reply_markup=start_kb())
+        return
+
+    if not has_photo and not user_text:
+        await message.answer(
+            "Пришли <b>фото</b> сюда — и я подберу промпт под него 🙌",
+            reply_markup=wow_cancel_kb(),
+        )
+        return
+
+    await state.clear()
+    thinking = await message.answer("🪄 Колдую над твоим кадром… пара секунд.")
+
+    prompt_block = None
+    if has_photo and rate_ok(user_id, "wow_ai", 30):
+        try:
+            file = await bot.get_file(message.photo[-1].file_id)
+            # Анти-абуз: не качаем гигантские файлы
+            if not file.file_size or file.file_size <= 5 * 1024 * 1024:
+                bio = await bot.download_file(file.file_path)
+                image_b64 = base64.b64encode(bio.read()).decode("utf-8")
+                prompt_block = await ai_vision(
+                    WOW_SYSTEM,
+                    "Вот моё фото для первого AI-чуда. Подбери промпт под этот кадр.",
+                    image_b64,
+                )
+        except Exception as e:
+            logging.error(f"wow photo error: {e}")
+
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+
+    add_xp(user_id, "wow")
+    refresh_discount(user_id)
+    new_badge = give_badge(user_id, "wonder")
+    toast = badge_toast("wonder") if new_badge else ""
+
+    if not prompt_block:
+        # Fallback — готовый промпт из пула (ноль расхода / AI недоступен / прислали текст)
+        prompt_block = (
+            "Отличное фото! Держи проверенный промпт под это задание:\n\n"
+            f"📋 <b>Твой промпт:</b>\n<code>{task['prompt']}</code>\n\n"
+            "<b>Вставь его вместе с фото в бота по кнопке ниже — результат за 30 секунд.</b>"
+        )
+
+    track("wow_done", user_id)
+    await message.answer(
+        "🪄 <b>ГОТОВО — ВОТ ТВОЁ ПЕРВОЕ AI-ЧУДО</b>\n\n"
+        f"{prompt_block}\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "Видишь? Нейросети — это правда просто. 🔥\n"
+        f"🏅 <b>+20 XP</b> за первое чудо!{toast}",
+        reply_markup=wow_result_kb(),
+        disable_web_page_preview=True,
+    )
+
+    # Через 5 минут — мягкий зов на канал с бесплатными гайдами
+    asyncio.create_task(_send_channel_later(message.from_user.id))
 
 
 # ─── МЕХАНИКА №1: ЧЕЛЛЕНДЖ ДНЯ (промпт-дуэль, оценивает AI) ─────────────────────────────────────────
