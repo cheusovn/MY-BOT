@@ -599,12 +599,19 @@ def back_kb():
 # ─── ВСПОМОГАТЕЛЬНАЯ ───────────────────────────────────────────────────────────────────
 
 async def show(call: CallbackQuery, text: str, kb: InlineKeyboardMarkup):
+    # Сразу подтверждаем callback, пока он не протух (иначе "query is too old")
+    try:
+        await call.answer()
+    except Exception:
+        pass
     try:
         await call.message.delete()
     except Exception:
         pass
-    await call.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
-    await call.answer()
+    try:
+        await call.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception as e:
+        logging.warning(f"show() answer failed: {e}")
 
 
 # ─── ХЭНДЛЕРЫ ──────────────────────────────────────────────────────────────────────────────
