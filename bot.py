@@ -168,11 +168,14 @@ async def cmd_start(message: Message, state: FSMContext):
     )
 
     if os.path.exists(WELCOME_IMG):
-        await message.answer_photo(
-            photo=FSInputFile(WELCOME_IMG),
-            caption=text,
-            reply_markup=start_kb()
-        )
+        try:
+            await message.answer_photo(
+                photo=FSInputFile(WELCOME_IMG),
+                caption=text,
+                reply_markup=start_kb()
+            )
+        except Exception:
+            await message.answer(text, reply_markup=start_kb())
     else:
         await message.answer(text, reply_markup=start_kb())
 
