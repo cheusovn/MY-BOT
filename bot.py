@@ -170,6 +170,12 @@ TARIFFS = {
              "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM"},
 }
 
+# ─── ЮKassa (Telegram Payments) ───────────────────────────────────────────────────────────────────
+# Provider token из @BotFather → Payments → ЮKassa. Тестовый содержит ":TEST:".
+# Если не задан — кнопка оплаты картой уходит на менеджера (как раньше).
+YOOKASSA_TOKEN = os.environ.get("YOOKASSA_PROVIDER_TOKEN", "")
+YOOKASSA_TEST = ":TEST:" in YOOKASSA_TOKEN
+
 # ─── АНАЛИТИКА: лог воронки ───────────────────────────────────────────────────────────────────────
 EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
 events_log = load_json(EVENTS_FILE, {"counters": {}, "recent": []})
@@ -540,17 +546,21 @@ def tariffs_kb(spots: int = None):
 
 
 def pay_choice_kb(plan_key: str):
-    """Выбор способа оплаты: Telegram Stars (без ИП) или карта РФ через менеджера."""
+    """Оплата картой РФ через ЮKassa; если токен не задан — через менеджера."""
     t = TARIFFS.get(plan_key, TARIFFS["vip"])
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"⭐ Оплатить в Telegram — {t['stars']} Stars",
-                              callback_data=f"stars_{plan_key}")],
-        [InlineKeyboardButton(text="💳 Картой РФ через менеджера",
-                              callback_data=f"card_{plan_key}")],
-        [InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
-                              callback_data=f"bump_{plan_key}")],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
-    ])
+    rows = []
+    if YOOKASSA_TOKEN:
+        label = f"💳 Оплатить картой — {t['now']:,} ₽".replace(",", " ")
+        if YOOKASSA_TEST:
+            label += "  (ТЕСТ)"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"yk_{plan_key}")])
+    else:
+        rows.append([InlineKeyboardButton(text="💳 Картой РФ через менеджера",
+                                          callback_data=f"card_{plan_key}")])
+    rows.append([InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
+                                      callback_data=f"bump_{plan_key}")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def to_manager_with_bump_kb(plan: str):
@@ -970,9 +980,8 @@ async def cb_buy(call: CallbackQuery):
         f"<s>{t['old']:,} ₽</s> → <b>{t['now']:,} ₽</b>\n".replace(",", " ") +
         f"{t['perks']}\n\n"
         "━━━━━━━━━━━━━━━━\n"
-        "<b>Выбери способ оплаты:</b>\n\n"
-        f"⭐ <b>Telegram Stars</b> — мгновенно, прямо в приложении.\n"
-        f"💳 <b>Картой РФ</b> — менеджер пришлёт реквизиты, оплата за 2 минуты.\n\n"
+        "💳 <b>Оплата картой РФ</b> — быстро и безопасно через ЮKassa,\n"
+        "доступ открывается сразу после оплаты.\n\n"
         "🛡 Без риска: сначала 2 дня бесплатно, потом решаешь.\n"
         "💡 Есть промокод друга? Скидку 500 ₽ применит менеджер.\n\n"
         "👇"
@@ -1017,28 +1026,58 @@ async def cb_card(call: CallbackQuery):
         pass
 
 
-@dp.callback_query(lambda c: c.data.startswith("stars_"))
-async def cb_stars(call: CallbackQuery):
-    plan_key = call.data.replace("stars_", "")
+@dp.callback_query(lambda c: c.data.startswith("yk_"))
+async def cb_yookassa(call: CallbackQuery):
+    plan_key = call.data.replace("yk_", "")
     t = TARIFFS.get(plan_key, TARIFFS["vip"])
     user_id = str(call.from_user.id)
-    track("stars_invoice", user_id, plan_key)
+    track("yookassa_invoice", user_id, plan_key)
     await call.answer()
+
+    if not YOOKASSA_TOKEN:
+        await call.message.answer(
+            "💳 Оплата картой пока настраивается. Напиши менеджеру — оформим вручную:",
+            reply_markup=to_manager_kb(),
+        )
+        return
+
+    # Чек для 54-ФЗ (нужен, если в магазине ЮKassa включена фискализация)
+    provider_data = json.dumps({
+        "receipt": {
+            "items": [{
+                "description": f"{t['label']} — TRUE AI ACADEMY"[:128],
+                "quantity": "1.00",
+                "amount": {"value": f"{t['now']}.00", "currency": "RUB"},
+                "vat_code": 1,
+                "payment_mode": "full_payment",
+                "payment_subject": "service",
+            }],
+        }
+    })
     try:
         await bot.send_invoice(
             chat_id=call.from_user.id,
-            title=f"{t['label']} — TRUE AI ACADEMY",
-            description=t["perks"],
+            title=f"{t['label']} — TRUE AI ACADEMY"[:32],
+            description=t["perks"][:255],
             payload=f"course_{plan_key}",
-            provider_token="",          # пусто = Telegram Stars (без ИП/самозанятого)
-            currency="XTR",
-            prices=[LabeledPrice(label=t["label"], amount=t["stars"])],
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=t["label"][:32], amount=t["now"] * 100)],  # в копейках
+            need_email=True,
+            send_email_to_provider=True,
+            provider_data=provider_data,
             start_parameter="buy",
         )
+        if YOOKASSA_TEST:
+            await call.message.answer(
+                "🧪 <b>Тестовый режим ЮKassa.</b>\n"
+                "Оплати картой <code>1111 1111 1111 1026</code>, "
+                "срок <b>12/26</b>, CVC <b>000</b> — деньги не спишутся."
+            )
     except Exception as e:
-        logging.error(f"Invoice error: {e}")
+        logging.error(f"YooKassa invoice error: {e}")
         await call.message.answer(
-            "⚠️ Не удалось открыть оплату Stars. Давай картой РФ — это быстро:",
+            "⚠️ Не удалось открыть оплату картой. Попробуй ещё раз или напиши менеджеру:",
             reply_markup=to_manager_kb(),
         )
 
@@ -1060,6 +1099,15 @@ async def on_paid(message: Message):
     new_badge = give_badge(user_id, "buyer")
     add_xp(user_id, "buy")
 
+    # Сумма и метод в зависимости от валюты
+    if sp.currency == "XTR":
+        amount_str = f"{sp.total_amount} ⭐ Stars"
+        method = "Telegram Stars"
+    else:
+        amount_str = f"{sp.total_amount / 100:.0f} {sp.currency}"
+        method = "ЮKassa (карта)"
+    is_test = YOOKASSA_TEST and sp.currency == "RUB"
+
     toast = badge_toast("buyer") if new_badge else ""
     await message.answer(
         f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
@@ -1075,13 +1123,14 @@ async def on_paid(message: Message):
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"✅✅✅ <b>ОПЛАТА STARS!</b>\n\n"
+            f"✅✅✅ <b>ОПЛАТА{' (ТЕСТ)' if is_test else ''}!</b>\n\n"
             f"👤 {name} ({uname})\n"
             f"🆔 ID: <code>{user_id}</code>\n"
             f"📦 Тариф: {t['label']}\n"
-            f"⭐ {sp.total_amount} Stars\n"
+            f"💳 {method}: {amount_str}\n"
             f"🧾 charge: <code>{sp.telegram_payment_charge_id}</code>\n"
-            "→ Добавь в закрытый чат с куратором."
+            + ("🧪 Это тестовый платёж — деньги не списаны.\n" if is_test else "")
+            + "→ Добавь в закрытый чат с куратором."
         )
     except Exception:
         pass
@@ -1396,15 +1445,15 @@ async def cmd_stats(message: Message):
         f"  ▶️ день 1: {c.get('day1', 0)}\n"
         f"  ▶️ день 2: {c.get('day2', 0)}\n"
         f"  💰 тарифы: {c.get('special_tariffs', 0)}\n"
-        f"  ⭐ счёт Stars: {c.get('stars_invoice', 0)}\n"
+        f"  💳 счёт ЮKassa: {c.get('yookassa_invoice', 0)}\n"
         f"  💳 заявка картой: {c.get('card_request', 0)}\n"
-        f"  ✅ оплачено Stars: {c.get('pay_success', 0)}"
+        f"  ✅ оплачено: {c.get('pay_success', 0)}"
     )
     await message.answer(
         f"📊 <b>Статистика</b>\n\n"
         f"👥 Пользователей: <b>{total}</b>\n"
         f"💰 Заявок: <b>{purchased}</b> ({conv:.1f}%)\n"
-        f"✅ Оплат Stars: <b>{paid}</b>\n"
+        f"✅ Оплат: <b>{paid}</b>\n"
         f"🎫 Промокодов: <b>{len(promos)}</b>\n"
         f"📦 Мест осталось: <b>{get_spots()}</b>\n\n"
         f"<b>Воронка (события):</b>\n{funnel}\n\n"
