@@ -89,9 +89,9 @@ def day2_kb():
 def tariffs_kb():
     # PRO показан первым — якорный эффект делает VIP «выгодным»
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 PRO + продвижение — 15 900 ₽", callback_data="buy_pro")],
-        [InlineKeyboardButton(text="⭐ VIP с куратором — 9 900 ₽  ← ТОПЧИК", callback_data="buy_vip")],
-        [InlineKeyboardButton(text="📦 Базовый — 5 900 ₽", callback_data="buy_base")],
+        [InlineKeyboardButton(text="🚀 PRO + продвижение — 7 900 ₽", callback_data="buy_pro")],
+        [InlineKeyboardButton(text="⭐ VIP с куратором — 4 900 ₽  ← ТОПЧИК", callback_data="buy_vip")],
+        [InlineKeyboardButton(text="📦 Базовый — 2 900 ₽", callback_data="buy_base")],
         [
             InlineKeyboardButton(text="🛡 Гарантия", callback_data="guarantee"),
             InlineKeyboardButton(text="❓ Вопросы", callback_data="faq"),
@@ -233,7 +233,7 @@ async def cb_tariffs(call: CallbackQuery):
         "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
         f"⚠️ Осталось мест по акционной цене: <b>{SPOTS_LEFT}</b>\n\n"
         "──────────────────────────\n"
-        "🚀 <b>PRO + ПРОДВИЖЕНИЕ — 15 900 ₽</b>\n"
+        "🚀 <b>PRO + ПРОДВИЖЕНИЕ — 7 900 ₽</b>\n"
         "──────────────────────────\n"
         "Для тех, кто хочет не просто учиться, а <b>выйти на доход</b>:\n"
         "✅ Всё из VIP\n"
@@ -245,14 +245,14 @@ async def cb_tariffs(call: CallbackQuery):
         "🧲 Лид-магниты и воронки продаж\n"
         "🎯 Как набрать 1 млн просмотров\n\n"
         "──────────────────────────\n"
-        "⭐ <b>VIP С КУРАТОРОМ — 9 900 ₽</b>  ← выбирает большинство\n"
+        "⭐ <b>VIP С КУРАТОРОМ — 4 900 ₽</b>  ← выбирает большинство\n"
         "──────────────────────────\n"
         "✅ Все 7 дней курса\n"
         "✅ Личный куратор + проверка домашних заданий\n"
         "✅ Закрытый чат поддержки 24/7\n"
         "✅ Доступ навсегда\n\n"
         "──────────────────────────\n"
-        "📦 <b>БАЗОВЫЙ — 5 900 ₽</b>\n"
+        "📦 <b>БАЗОВЫЙ — 2 900 ₽</b>\n"
         "──────────────────────────\n"
         "✅ Все 7 дней курса\n"
         "✅ Доступ навсегда\n\n"
@@ -354,9 +354,9 @@ async def cb_guarantee(call: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("buy_"))
 async def cb_buy(call: CallbackQuery):
     plans = {
-        "buy_base": ("📦 Базовый — 5 900 ₽", "базовый"),
-        "buy_vip":  ("⭐ VIP с куратором — 9 900 ₽", "VIP"),
-        "buy_pro":  ("🚀 PRO + продвижение — 15 900 ₽", "PRO"),
+        "buy_base": ("📦 Базовый — 2 900 ₽", "базовый"),
+        "buy_vip":  ("⭐ VIP с куратором — 4 900 ₽", "VIP"),
+        "buy_pro":  ("🚀 PRO + продвижение — 7 900 ₽", "PRO"),
     }
     plan_label, plan_short = plans.get(call.data, ("Тариф", "выбранный"))
 
@@ -400,8 +400,8 @@ async def cb_referral(call: CallbackQuery, state: FSMContext):
             "1️⃣ Поделись промокодом с другом\n"
             "2️⃣ Друг называет его менеджеру при оплате\n"
             "3️⃣ Ты получаешь 30% на карту 💸\n\n"
-            "💡 <i>Пример: с тарифа VIP (9 900₽) ты получишь\n"
-            "2 970 ₽ за одного друга</i>"
+            "💡 <i>Пример: с тарифа VIP (4 900₽) ты получишь\n"
+            "1 470 ₽ за одного друга</i>"
         )
         await show(call, text, back_kb())
     else:
@@ -410,7 +410,7 @@ async def cb_referral(call: CallbackQuery, state: FSMContext):
             "👥 <b>ПАРТНЁРСКАЯ ПРОГРАММА</b>\n\n"
             "🎁 <b>Ты получаешь 30%</b> с каждой оплаты друга — на карту\n"
             "🎁 Друг получает <b>скидку 500 ₽</b>\n\n"
-            "💡 <i>Пример: 3 друга купили VIP → ты заработал 8 910 ₽</i>\n\n"
+            "💡 <i>Пример: 3 друга купили VIP → ты заработал 4 410 ₽</i>\n\n"
             "✍️ <b>Придумай свой промокод и напиши его сообщением:</b>\n"
             "(3–20 символов, только буквы и цифры)\n"
             "Пример: <code>IVAN25</code> или <code>NEYRO</code>\n\n"
@@ -484,9 +484,9 @@ async def cmd_tariffs(message: Message):
     text = (
         f"💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
         f"⚠️ Осталось мест по акционной цене: <b>{SPOTS_LEFT}</b>\n\n"
-        "🚀 <b>PRO + продвижение — 15 900 ₽</b>\n"
-        "⭐ <b>VIP с куратором — 9 900 ₽</b>  ← выбирает большинство\n"
-        "📦 <b>Базовый — 5 900 ₽</b>\n\n"
+        "🚀 <b>PRO + продвижение — 7 900 ₽</b>\n"
+        "⭐ <b>VIP с куратором — 4 900 ₽</b>  ← выбирает большинство\n"
+        "📦 <b>Базовый — 2 900 ₽</b>\n\n"
         "👇 Выбери свой тариф:"
     )
     await message.answer(text, reply_markup=tariffs_kb())
