@@ -311,7 +311,7 @@ DISCOUNT_TTL = 24 * 3600  # сколько живёт разблокирован
 # резерв. Всё текстовое и короткое (max_tokens мал) → расход минимальный.
 #
 # Env: OPENROUTER_API_KEY — openrouter.ai
-OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_EXTRA = {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"}
 
