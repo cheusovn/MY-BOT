@@ -132,11 +132,11 @@ def generate_code(name: str) -> str:
 # Честный social proof: агрегированные формулировки без выдуманных имён/городов/точного времени,
 # которые легко опровергнуть и потерять доверие. Опираемся на реальные счётчики, где можем.
 SOCIAL_PROOF_LINES = [
-    "🔥 Сегодня курс уже выбрали несколько человек",
-    "🔥 VIP с куратором — самый частый выбор на этой неделе",
-    "🔥 Большинство берут именно VIP (7 из 10)",
-    "🔥 Места по акционной цене разбирают каждый день",
-    "👥 Поток набирается — успей попасть по текущей цене",
+    "👋 Рядом учатся такие же новички — ты не один",
+    "💚 VIP с куратором берут чаще всего: так спокойнее",
+    "✨ Сегодня к нам заглянули ещё несколько человек",
+    "🎓 Начать можно бесплатно — без карты и обязательств",
+    "🌱 Учимся в своём темпе, спешить не нужно",
 ]
 
 
@@ -152,29 +152,26 @@ GOAL_LABELS = {
 
 GOAL_HOOKS = {
     "freelance": (
-        "💸 <b>Хочешь зарабатывать на нейросетях?</b>\n\n"
-        "AI-контент — ниша, где спрос обгоняет исполнителей.\n"
-        "Те, кто освоил инструменты, берут заказы по\n"
-        "<b>800–2 500 ₽</b> за ролик или карточку товара.\n\n"
-        "Остальные продолжают платить за это другим.\n"
-        "Разница — <b>один навык.</b>\n\n"
+        "💸 <b>Хочешь подзаработать на нейросетях?</b>\n\n"
+        "Сейчас многие ищут, кто сделает им картинку,\n"
+        "ролик или карточку товара. Платят <b>800–2 500 ₽</b>\n"
+        "за штуку — а умеют пока единицы.\n\n"
+        "Это обычный навык. Ему можно научиться.\n\n"
     ),
     "business": (
-        "🏢 <b>Хочешь прокачать бизнес через AI?</b>\n\n"
-        "Твои конкуренты уже используют AI для\n"
-        "контента, рекламы и продаж.\n\n"
-        "Что это даёт на практике:\n"
-        "▸ Экономия на подрядчиках за контент\n"
-        "▸ В разы больше материалов своими силами\n"
-        "▸ Быстрее тестируешь идеи и креативы\n\n"
+        "🏢 <b>Хочешь применить нейросети в своём деле?</b>\n\n"
+        "Контент, реклама, тексты — это можно делать\n"
+        "самому, быстрее и без подрядчиков:\n\n"
+        "▸ меньше тратишь на дизайнеров и копирайтеров\n"
+        "▸ больше материалов своими силами\n"
+        "▸ быстрее проверяешь идеи\n\n"
     ),
     "curious": (
-        "🔍 <b>Хочешь разобраться в нейросетях?</b>\n\n"
-        "<b>Признаюсь:</b> курс подойдёт не всем.\n"
-        "Если ищешь «волшебную таблетку» — нам не по пути.\n\n"
-        "Но если готов уделить <b>1–2 часа в день</b>\n"
-        "— через 7 дней будешь в топ-5% по работе с AI.\n"
-        "Это реально.\n\n"
+        "🔍 <b>Просто интересно, как это всё работает?</b>\n\n"
+        "Скажу честно: волшебной кнопки нет.\n"
+        "Но если уделять час-другой в день,\n"
+        "за неделю реально разобраться с нуля.\n"
+        "Спокойно, по шагам — я рядом.\n\n"
     ),
 }
 
@@ -252,7 +249,7 @@ BADGES = {
     "streak7":      "⚡ Серия 7 дней",
     "challenger":   "🥊 Боец челленджа",
     "lucky":        "🎰 Крутанул колесо удачи",
-    "wonder":       "🪄 Первое AI-чудо",
+    "wonder":       "🪄 Первое волшебное фото",
 }
 
 XP_RULES = {
@@ -854,20 +851,21 @@ def goal_kb():
 def start_kb(uid: str = None):
     # Главный экран: ключевые действия + геймификация сразу на виду.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤯 Кинь фото — нейросеть тебя удивит (бесплатно)", callback_data="wow")],
-        [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня доступа", callback_data="day1")],
-        [InlineKeyboardButton(text="🔥 ПОДАРОК: 100+ AI бесплатно", callback_data="free_gift")],
+        [InlineKeyboardButton(text="✨ Оживить своё фото (бесплатно)", callback_data="wow")],
+        [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня курса", callback_data="day1")],
+        [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
         [
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
-            InlineKeyboardButton(text="🏆 Кейсы", callback_data="results"),
+            InlineKeyboardButton(text="🏆 Истории", callback_data="results"),
         ],
-        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP) — оценит AI", callback_data="challenge")],
+        [InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author")],
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
         [
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
-        [InlineKeyboardButton(text="🛒 Магазин за XP — генерации и скидки", callback_data="shop")],
-        [InlineKeyboardButton(text="💸 Пригласить друга — 30% на карту", callback_data="referral")],
+        [InlineKeyboardButton(text="🛒 Магазин: обменять опыт на бонусы", callback_data="shop")],
+        [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
 
 
@@ -1060,18 +1058,14 @@ async def cmd_start(message: Message, state: FSMContext):
         save_users()
 
     text = (
-        f"👋 <b>{name}, я твой AI-гид в True AI Academy.</b>\n\n"
-        "Здесь обучение устроено <b>как игра</b>:\n"
-        "🎮 проходишь уровни, копишь XP и бейджи,\n"
-        "🔥 держишь серию дней — я веду тебя за руку\n"
-        "от первого промпта до готового портфолио.\n\n"
-        "━━━━━━━━━━━━━━━━\n"
+        f"👋 <b>{name}, рад видеть!</b>\n\n"
+        "Помогу разобраться с нейросетями с нуля —\n"
+        "спокойно и по шагам. Будет даже интересно:\n"
+        "проходишь уроки, копишь опыт, открываешь награды.\n\n"
         "🎁 Первые 2 дня — бесплатно, без карты\n"
-        "🏅 За каждый шаг — опыт и достижения\n"
-        "💬 Поддержка 24/7, если где-то застрял\n"
-        "━━━━━━━━━━━━━━━━\n\n"
-        "❓ <b>С чего начнём?</b>\n"
-        "Выбери цель — подберу твой маршрут:"
+        "🎮 За каждый шаг — опыт и небольшие бонусы\n"
+        "💬 Застрянешь — помогу\n\n"
+        "С чего начнём? Выбери, что тебе ближе 👇"
     )
 
     # Приветственное фото — только новым пользователям.
@@ -1101,13 +1095,12 @@ async def cb_goal(call: CallbackQuery):
     hook = GOAL_HOOKS.get(goal, "")
     text = (
         hook +
-        "━━━━━━━━━━━━━━━━\n"
-        "🤯 <b>Лучший первый шаг — кинь фото, и нейросеть тебя удивит.</b>\n"
-        "Оживлю твой кадр за минуту — бесплатно, 1 раз.\n"
-        "Сам увидишь, что AI проще, чем кажется.\n\n"
-        "🎓 А дальше — <b>2 дня полного курса бесплатно</b>\n"
-        "или <b>100+ нейросетей в подарок</b>.\n\n"
-        "👇 Что выберешь?"
+        "✨ <b>Проще один раз увидеть.</b>\n"
+        "Пришли любое фото — и нейросеть его оживит\n"
+        "за минуту. Бесплатно, сам убедишься, что это легко.\n\n"
+        "🎓 А дальше — 2 дня курса бесплатно\n"
+        "или 100+ нейросетей в подарок.\n\n"
+        "Что выберешь? 👇"
     )
     await show(call, text, start_kb())
 
@@ -1131,13 +1124,14 @@ async def cb_free_gift(call: CallbackQuery):
     add_xp(user_id, "free_gift")
     give_badge(user_id, "explorer")
     text = (
-        "🎁 <b>100+ НЕЙРОСЕТЕЙ — БЕСПЛАТНО НА 100+ ДНЕЙ</b>\n\n"
-        "Рыночная цена набора ~38 000 ₽/год. Тебе — <b>бесплатно</b>, без карты.\n\n"
-        "🎨 Midjourney · 🎬 Kling, Runway, Veo · 🤖 ChatGPT\n"
-        "🎵 Suno · 🔊 ElevenLabs · 📸 Nano Banana + 95 ещё\n\n"
-        "Хочу, чтобы ты сам увидел, что AI реально может.\n"
-        f"🔥 Уже <b>{STUDENTS_COUNT}+ человек</b> забрали подарок.\n\n"
-        "👇 Получи прямо сейчас:"
+        "🎁 <b>100+ нейросетей — в подарок</b>\n\n"
+        "Целый набор: рисуют картинки, монтируют видео,\n"
+        "пишут тексты, делают музыку и озвучку.\n\n"
+        "🎨 Midjourney · 🎬 Kling, Runway · 🤖 ChatGPT\n"
+        "🎵 Suno · 🔊 ElevenLabs и ещё под сотню\n\n"
+        "Бесплатно и без карты — просто чтобы ты попробовал.\n"
+        f"Уже забрали больше {STUDENTS_COUNT} человек.\n\n"
+        "👇 Забрать:"
     )
     await show_img(call, "gift.jpg", text, free_gift_kb())
 
@@ -1152,15 +1146,16 @@ async def cb_day1(call: CallbackQuery):
     bonus = badge_toast("first_step") if new_badge else ""
 
     text = (
-        "🎓 <b>ДЕНЬ 1 — ПРОГРЕСС: █░░ 33%</b>  <i>(+30 XP)</i>\n\n"
-        "Это не вводная лекция, а <b>реальные уроки</b>.\n\n"
-        "<b>За ближайшие 40 минут ты:</b>\n"
-        "▸ запустишь нейросеть без регистраций\n"
-        "▸ создашь изображения уровня эксперта\n"
-        "▸ напишешь первый рабочий промпт\n"
-        "▸ увидишь, <i>где именно деньги в AI</i>\n\n"
-        "⚠️ Закрытое предложение и бонусы откроются <b>после 2-го дня</b>.\n\n"
-        "👇 Открывай прямо сейчас:"
+        "🎓 <b>День 1 — начало</b>  <i>(+30 XP)</i>\n"
+        "█░░ 33%\n\n"
+        "Никакой скучной теории — сразу практика.\n\n"
+        "<b>За ближайший час ты:</b>\n"
+        "▸ запустишь первую нейросеть\n"
+        "▸ сделаешь картинку, как у профи\n"
+        "▸ напишешь свой первый запрос\n"
+        "▸ поймёшь, где тут деньги\n\n"
+        "А после 2-го дня будет небольшой сюрприз 🙂\n\n"
+        "👇 Открыть первый день:"
         + bonus
     )
     await show_img(call, "day1.jpg", text, day1_kb())
@@ -1176,15 +1171,16 @@ async def cb_day2(call: CallbackQuery):
     bonus = badge_toast("day1_done") if new_badge else ""
 
     text = (
-        "🔥 <b>ДЕНЬ 2 — ПРОГРЕСС: ██░ 66%</b>  <i>(+50 XP)</i>\n\n"
-        "День 1 пройден — ты уже не новичок. Сегодня — черта между\n"
-        "«просто интересно» и <b>«могу заработать».</b>\n\n"
-        "<b>Что внутри:</b>\n"
-        "▸ профессиональные генерации и свои промпты\n"
-        "▸ работы, за которые <b>платят 5–30k ₽</b>\n"
-        "▸ воронка: навык → заказ → деньги\n\n"
-        "⚡ После 2-го дня открою <b>закрытое предложение + 3 бонуса</b> — только для дошедших.\n\n"
-        "👇 Открывай:"
+        "🔥 <b>День 2 — самое интересное</b>  <i>(+50 XP)</i>\n"
+        "██░ 66%\n\n"
+        "Первый день позади — ты уже умеешь больше,\n"
+        "чем думаешь. Сегодня про то, как превратить\n"
+        "это в реальные деньги.\n\n"
+        "<b>Внутри:</b>\n"
+        "▸ работы, за которые платят 5 000–30 000 ₽\n"
+        "▸ путь: навык → заказ → оплата\n\n"
+        "А в конце — небольшой подарок для тех, кто дошёл 🙂\n\n"
+        "👇 Открыть второй день:"
         + bonus
     )
     await show_img(call, "day2.jpg", text, day2_kb())
@@ -1221,17 +1217,18 @@ async def cb_special_tariffs(call: CallbackQuery):
         disc_block = ""
 
     text = (
-        "🔐 <b>ЗАКРЫТОЕ ПРЕДЛОЖЕНИЕ — 100%</b>\n"
-        "Ты прошёл 2 дня. Это видят единицы.\n\n"
-        f"⏳ Сгорает до <b>{deadline}</b> · мест по цене: <b>{s}</b>\n\n"
+        "💚 <b>Спасибо, что дошёл до конца</b>\n"
+        "Так делают немногие — и для тебя есть лучшая цена.\n\n"
+        f"⏳ Держится до <b>{deadline}</b> · мест по цене: <b>{s}</b>\n\n"
         f"{disc_block}"
-        "⭐ <b>VIP С КУРАТОРОМ</b>\n"
-        "<s>9 900 ₽</s> → <b>4 970 ₽</b> · один раз, навсегда\n"
-        "✅ Все 7 дней + куратор + разбор работ + чат 24/7\n\n"
-        "🎁 <b>+ бонусы только сегодня</b> (на 6 470 ₽ — бесплатно):\n"
-        "гайд «30 источников заказов», 100+ промптов, шаблон портфолио\n\n"
-        "🛡 Без риска: 2 дня ты уже сделал бесплатно — материалы остаются с тобой.\n\n"
-        "👇 Выбирай:"
+        "⭐ <b>VIP с куратором</b>\n"
+        "<s>9 900 ₽</s> → <b>4 970 ₽</b> · один раз, доступ навсегда\n"
+        "Все 7 дней + куратор + разбор работ + чат\n\n"
+        "🎁 В подарок: гайд «где брать заказы»,\n"
+        "100+ промптов и шаблон портфолио\n\n"
+        "🛡 Спокойно: 2 дня ты уже прошёл бесплатно,\n"
+        "и всё, что сделал, остаётся с тобой.\n\n"
+        "👇 Выбирай, что подходит:"
     )
     await show_img(call, "special.jpg", text, tariffs_kb(s))
 
@@ -1245,7 +1242,7 @@ async def cb_tariffs(call: CallbackQuery):
 
     text = (
         "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n"
-        f"⚠️ Мест по акции: <b>{s}</b> · один раз, доступ навсегда\n\n"
+        f"Осталось мест по этой цене: <b>{s}</b> · доступ навсегда\n\n"
         "⭐ <b>VIP С КУРАТОРОМ</b> — берут 7 из 10\n"
         "<s>9 900 ₽</s> → <b>4 970 ₽</b>\n"
         "Все 7 дней + куратор + разбор работ + чат 24/7\n"
@@ -1265,7 +1262,7 @@ async def cb_tariffs(call: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "results")
 async def cb_results(call: CallbackQuery):
     text = (
-        "🏆 <b>РЕЗУЛЬТАТЫ СТУДЕНТОВ</b>\n\n"
+        "🏆 <b>Истории учеников</b>\n\n"
         f"За полгода через академию прошли <b>{STUDENTS_COUNT}+ человек.</b>\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "💬 <b>Марина, фрилансер → вышла на 60k/мес:</b>\n"
@@ -1291,6 +1288,29 @@ async def cb_results(call: CallbackQuery):
         [InlineKeyboardButton(text="🎓 Попробовать курс бесплатно (2 дня)", callback_data="day1")],
         [InlineKeyboardButton(text="🔥 Подарок — 100+ нейросетей", callback_data="free_gift")],
         [InlineKeyboardButton(text="💰 Смотреть тарифы", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ]))
+
+
+@dp.callback_query(lambda c: c.data == "author")
+async def cb_author(call: CallbackQuery):
+    track("author", str(call.from_user.id))
+    text = (
+        "👋 <b>Привет, я Николай — автор курса.</b>\n\n"
+        "Сам начинал с нуля: разобрался в нейросетях,\n"
+        "стал на них зарабатывать — и теперь учу этому.\n\n"
+        f"📌 {STUDENTS_COUNT} учеников уже начали\n"
+        "📌 97% делают первое видео к 7-му дню\n"
+        "📌 в курсе 10+ нейросетей — всё на практике\n\n"
+        "Объясняю по-человечески: без воды, сложных\n"
+        "терминов и обещаний «золотых гор».\n"
+        "Застрянешь — помогу лично.\n\n"
+        "Загляни на бесплатные 2 дня — просто посмотри,\n"
+        "как всё устроено. Платить ничего не нужно 👇"
+    )
+    await show_img(call, "author_card.jpg", text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня", callback_data="day1")],
+        [InlineKeyboardButton(text="💬 Написать Николаю", url=f"https://t.me/{MANAGER.lstrip('@')}")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
 
@@ -1348,6 +1368,7 @@ async def cb_guarantee(call: CallbackQuery):
     )
     await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ Ок, беру VIP", callback_data="buy_vip")],
+        [InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author")],
         [InlineKeyboardButton(text="← К тарифам", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
@@ -1551,7 +1572,7 @@ async def on_paid(message: Message):
     await message.answer(
         f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
         "Доступ ко всем 7 дням курса и бонусам открыт.\n"
-        f"Менеджер {MANAGER} свяжется с тобой в течение 15 минут "
+        f"Менеджер {MANAGER} напишет тебе совсем скоро "
         "и добавит в закрытый чат с куратором.\n\n"
         "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
         + toast,
@@ -1673,7 +1694,7 @@ async def grant_paid_access(chat_id: int, user_id: str, plan_key: str, amount_st
             chat_id,
             f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
             "Доступ ко всем 7 дням курса и бонусам открыт.\n"
-            f"Менеджер {MANAGER} свяжется с тобой в течение 15 минут "
+            f"Менеджер {MANAGER} напишет тебе совсем скоро "
             "и добавит в закрытый чат с куратором.\n\n"
             "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
             + toast,
@@ -1783,8 +1804,18 @@ async def cb_ykcheck(call: CallbackQuery):
     data = await yk_get_payment(pid)
     status = (data or {}).get("status")
     if status == "succeeded":
+        # Безопасность: платёж должен принадлежать ИМЕННО этому пользователю.
+        # pid и plan приходят из callback_data (управляются клиентом) — нельзя выдавать
+        # доступ по чужому/тест-платежу. Сверяем metadata.user_id и план из самого платежа.
+        meta = data.get("metadata") or {}
+        caller = str(call.from_user.id)
+        real_plan = meta.get("plan") or plan_key or "test"
+        if meta.get("user_id") and meta["user_id"] != caller:
+            logging.warning(f"ykcheck ownership mismatch: pid={pid} owner={meta.get('user_id')} caller={caller}")
+            await call.message.answer("⚠️ Этот платёж оформлен на другой аккаунт. Открой оплату заново через /tariffs.")
+            return
         amount = (data.get("amount") or {}).get("value", "0")
-        await grant_paid_access(call.message.chat.id, str(call.from_user.id), plan_key or "test", amount, pid)
+        await grant_paid_access(call.message.chat.id, caller, real_plan, amount, pid)
     elif status == "canceled":
         await call.message.answer("❌ Платёж отменён. Попробуй ещё раз через /tariffs.")
     else:
@@ -1946,16 +1977,14 @@ async def cb_wheel(call: CallbackQuery):
         return
 
     text = (
-        "🎰 <b>КОЛЕСО УДАЧИ — ТОЛЬКО ДЛЯ ДОШЕДШИХ ДО КОНЦА</b>\n\n"
-        "Ты прошёл 2 дня — это видят единицы. 🔥\n"
-        "За это даю <b>один</b> бесплатный прокрут колеса.\n\n"
-        "Что можно выиграть:\n"
-        "💸 доп. скидку до 1 500 ₽\n"
-        "🎁 100+ продающих промптов\n"
-        "📘 гайд «30 источников заказов»\n"
-        "👑 месяц VIP-куратора бесплатно\n\n"
-        "⚠️ Приз действует <b>только при оплате сегодня</b>.\n\n"
-        "👇 Крути:"
+        "🎰 <b>Колесо удачи</b>\n\n"
+        "Ты прошёл оба дня — держи бонус.\n"
+        "Один бесплатный прокрут, что выпадет — твоё:\n\n"
+        "💸 скидка до 1 500 ₽\n"
+        "🎁 100+ промптов\n"
+        "📘 гайд «где брать заказы»\n"
+        "👑 месяц с куратором\n\n"
+        "👇 Крутить:"
     )
     await show_img(call, "wheel.jpg", text, wheel_kb())
 
@@ -2027,21 +2056,20 @@ async def cb_wow(call: CallbackQuery, state: FSMContext):
     if _ensure_game(user_id).get("wow_used"):
         await show(
             call,
-            "🪄 <b>Своё AI-чудо ты уже создал!</b>\n\n"
-            "Бесплатная генерация — одна на аккаунт.\n"
-            "Но дальше возможностей в <b>100 раз больше</b> — \n"
-            "тут собрано <b>100+ нейросетей</b> 👇",
+            "✨ <b>Ты уже создал своё фото!</b>\n\n"
+            "Бесплатная попытка — одна.\n"
+            "Но это лишь начало: дальше целый набор нейросетей 👇",
             wow_used_kb(),
         )
         return
 
     await state.set_state(WowState.waiting_photo)
     text = (
-        "🪄 <b>ОЖИВИ СВОЁ ФОТО НЕЙРОСЕТЬЮ</b>\n\n"
-        "Сейчас сам убедишься: это <b>проще, чем ты думаешь.</b>\n\n"
-        "📸 Пришли фото — своё, друга или брата.\n"
-        "Я превращу его в то, что ты захочешь.\n\n"
-        "🎁 Это бесплатно — <b>1 раз на аккаунт.</b>\n\n"
+        "✨ <b>Оживи своё фото</b>\n\n"
+        "Сейчас сам увидишь — это правда просто.\n\n"
+        "📸 Пришли любое фото: своё, друга или кота 🙂\n"
+        "Скажешь, что с ним сделать — и покажу результат.\n\n"
+        "Бесплатно, одно фото.\n\n"
         "👇 Жду фото:"
     )
     await show_img(call, "wow.jpg", text, wow_cancel_kb())
@@ -2050,7 +2078,7 @@ async def cb_wow(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "wow_cancel")
 async def cb_wow_cancel(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show(call, "Окей, отложили. Это чудо ждёт тебя в меню 🪄", start_kb())
+    await show(call, "Окей, отложили. Фото можно оживить в любой момент ✨", start_kb())
 
 
 async def _send_channel_later(uid: int, delay: int = 300):
@@ -2092,7 +2120,7 @@ async def wow_photo(message: Message, state: FSMContext):
 
     if not message.photo and text.startswith("/"):
         await state.clear()
-        await message.answer("Окей, отложили чудо. Команда ниже 👇", reply_markup=start_kb())
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
         return
 
     if not message.photo:
@@ -2131,7 +2159,7 @@ async def wow_wish(message: Message, state: FSMContext):
 
     if wish.startswith("/"):
         await state.clear()
-        await message.answer("Окей, отложили чудо. Команда ниже 👇", reply_markup=start_kb())
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
         return
 
     if not wish:
@@ -2188,12 +2216,12 @@ async def wow_wish(message: Message, state: FSMContext):
         await message.answer_photo(
             photo=BufferedInputFile(img_bytes, filename="ai_magic.png"),
             caption=(
-                "🪄 <b>ГОТОВО — ВОТ ТВОЁ AI-ЧУДО!</b>\n\n"
-                "Ну как — <b>согласись, это проще, чем ты думал?</b> 🔥\n\n"
-                "А ведь это лишь капля. Тут собрано <b>100+ нейросетей</b> —\n"
-                "и возможностей в <b>100 раз больше</b>: видео, музыка, тексты, дизайн.\n\n"
-                "🏅 <b>+20 XP</b> за первое чудо!\n\n"
-                "👇 Забери весь арсенал:"
+                "✨ <b>Готово — вот результат!</b>\n\n"
+                "Ну как, проще, чем казалось? 🙂\n\n"
+                "А это сделала всего одна нейросеть. Их целый\n"
+                "набор: видео, музыка, тексты, дизайн.\n\n"
+                "🏅 +20 XP\n\n"
+                "👇 Посмотреть весь набор:"
             ),
             reply_markup=wow_sell_kb(),
         )
@@ -2471,12 +2499,12 @@ async def cb_challenge(call: CallbackQuery, state: FSMContext):
         return
     await state.set_state(ChallengeState.waiting)
     text = (
-        "🥊 <b>ЧЕЛЛЕНДЖ ДНЯ</b>\n\n"
+        "🥊 <b>Челлендж дня</b>\n\n"
         f"📌 <b>Тема:</b> {challenge_theme()}\n\n"
-        "Напиши свой <b>промпт</b> для нейросети на эту тему "
-        "(одним сообщением). AI оценит его по 10-балльной шкале "
-        "и подскажет, как улучшить.\n\n"
-        "🏅 За попытку — <b>+30 XP</b> и рост личной скидки.\n\n"
+        "Напиши свой запрос (промпт) для нейросети на эту\n"
+        "тему — одним сообщением. Я оценю по 10-балльной\n"
+        "шкале и подскажу, что улучшить.\n\n"
+        "🏅 За попытку — +30 XP и рост личной скидки.\n\n"
         "👇 Жду твой промпт:"
     )
     await show(call, text, challenge_cancel_kb())
@@ -2509,7 +2537,7 @@ async def process_challenge(message: Message, state: FSMContext):
     user_text = user_text[:1500]
 
     await state.clear()
-    thinking = await message.answer("🤖 AI оценивает твой промпт… пара секунд.")
+    thinking = await message.answer("✍️ Смотрю твой промпт… пара секунд.")
 
     review = await ai_text(
         CHALLENGE_SYSTEM,
@@ -2533,7 +2561,7 @@ async def process_challenge(message: Message, state: FSMContext):
         track("challenge_fallback", user_id)
         await message.answer(
             "🙌 <b>Промпт принят!</b>\n\n"
-            "AI-оценка сейчас недоступна, но XP уже твой.\n"
+            "Разбор сейчас недоступен, но XP уже твой.\n"
             f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
             reply_markup=start_kb(),
         )
@@ -2541,7 +2569,7 @@ async def process_challenge(message: Message, state: FSMContext):
 
     track("challenge_ai", user_id)
     await message.answer(
-        "🥊 <b>ОЦЕНКА AI</b>\n\n"
+        "🥊 <b>Разбор твоего промпта</b>\n\n"
         f"{review}\n\n"
         "━━━━━━━━━━━━━━━━\n"
         f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
@@ -2582,7 +2610,7 @@ async def cmd_challenge(message: Message, state: FSMContext):
     await message.answer(
         "🥊 <b>ЧЕЛЛЕНДЖ ДНЯ</b>\n\n"
         f"📌 <b>Тема:</b> {challenge_theme()}\n\n"
-        "Пришли свой промпт — AI оценит и подскажет, как улучшить. "
+        "Пришли свой промпт — дам оценку и подскажу, как улучшить. "
         "За попытку <b>+30 XP</b> 🏅",
         reply_markup=challenge_cancel_kb(),
     )
@@ -2602,7 +2630,7 @@ async def cmd_tariffs(message: Message):
     s = get_spots()
     text = (
         f"💰 <b>ТАРИФЫ</b>\n\n"
-        f"⚠️ Мест по акции: <b>{s}</b>\n\n"
+        f"Осталось мест по этой цене: <b>{s}</b>\n\n"
         "⭐ <b>VIP — 4 970 ₽</b>  ← берут 7 из 10\n"
         "🚀 <b>PRO + продвижение — 7 970 ₽</b>\n"
         "📦 <b>Базовый — 2 970 ₽</b>\n\n"
@@ -2645,7 +2673,7 @@ async def cmd_help(message: Message):
         "/trial — бесплатный доступ\n"
         "/tariffs — тарифы\n"
         "/profile — твой прогресс, XP, скидка и бейджи 🎮\n"
-        "/challenge — челлендж дня, оценит AI 🥊\n"
+        "/challenge — челлендж дня с разбором 🥊\n"
         "/top — рейтинг учеников 🏅\n\n"
         "💬 Менеджер ответит за 5 минут 👇"
     )
@@ -3033,7 +3061,7 @@ async def follow_up_scheduler():
                         and ts - data.get("tariffs_at", ts) > 20 * 3600):
                     s = get_spots()
                     await _fu_send(uid,
-                        f"⚠️ <b>Твоё закрытое предложение скоро закроется.</b>\n\n"
+                        f"💚 <b>Напоминаю про твоё предложение.</b>\n\n"
                         f"Осталось мест по акции: {s}.\n"
                         "Доступ к курсу — навсегда, без подписок.\n\n"
                         "👇 Посмотреть тарифы:",
@@ -3060,8 +3088,8 @@ async def follow_up_scheduler():
                 if (active_discount(uid) > 0 and not data.get("fu_disc")
                         and 0 < until - ts < 3 * 3600):
                     await _fu_send(uid,
-                        f"💸 <b>Твоя скидка {active_discount(uid)} ₽ скоро сгорит!</b>\n\n"
-                        "Ты заработал её прогрессом — обидно терять.\n"
+                        f"💸 <b>Твоя скидка {active_discount(uid)} ₽ ещё действует.</b>\n\n"
+                        "Ты честно заработал её прогрессом 🙂\n"
                         "Успей применить на тарифе 👇",
                         tariffs_kb(get_spots()), "fu_disc")
                     continue

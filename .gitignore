@@ -16,3 +16,4 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+images/_bg/
