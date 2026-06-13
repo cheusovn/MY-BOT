@@ -2783,6 +2783,7 @@ def admin_kb():
         [InlineKeyboardButton(text="👥 Последние пользователи", callback_data="adm_users")],
         [InlineKeyboardButton(text="📥 Экспорт данных", callback_data="adm_export")],
         [InlineKeyboardButton(text="🧪 Тест оплаты 100 ₽", callback_data="ykapi_test")],
+        [InlineKeyboardButton(text="♻️ Полный сброс (всё)", callback_data="adm_reset")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
@@ -2845,6 +2846,53 @@ async def cb_adm_users(call: CallbackQuery):
         return
     await call.answer()
     await call.message.answer(build_recent_users_text(), reply_markup=admin_back_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_reset")
+async def cb_adm_reset(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Сначала скачать бэкап", callback_data="adm_export")],
+        [InlineKeyboardButton(text="🔴 ДА, стереть ВСЁ безвозвратно", callback_data="adm_reset_yes")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="adm_home")],
+    ])
+    await call.message.answer(
+        "⚠️ <b>ПОЛНЫЙ СБРОС</b>\n\n"
+        f"Будет безвозвратно удалено:\n"
+        f"• 👥 Пользователи: <b>{len(users)}</b>\n"
+        f"• 🎫 Промокоды/рефералы: <b>{len(promos)}</b>\n"
+        f"• 📊 Вся статистика и счётчики\n"
+        f"• 📦 Места по акции (сброс к исходным)\n\n"
+        "Бот станет как новый. Восстановить нельзя.\n"
+        "Рекомендую сначала скачать бэкап 👇",
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(lambda c: c.data == "adm_reset_yes")
+async def cb_adm_reset_yes(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer("Стираю…")
+    users.clear()
+    promos.clear()
+    spots_data.clear()
+    events_log.get("counters", {}).clear()
+    events_log.get("recent", []).clear()
+    _granted_payments.clear()
+    # помечаем все файлы на запись (фоновый flusher перезапишет пустыми)
+    for key in ("users", "promos", "spots", "events"):
+        _mark_dirty(key)
+    await call.message.answer(
+        "✅ <b>Полный сброс выполнен.</b>\n\n"
+        "Пользователи, промокоды, рефералы и статистика обнулены. "
+        "Бот как новый.",
+        reply_markup=admin_back_kb(),
+    )
 
 
 @dp.callback_query(lambda c: c.data == "adm_export")
