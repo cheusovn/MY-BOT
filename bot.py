@@ -26,7 +26,7 @@ TRIAL_DAY_1 = "https://t.me/+5ep9DPf7eNMzZjdi"
 TRIAL_DAY_2 = "https://t.me/+SpoNR-ahkJFiZTJi"
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 MANAGER = "@nikolay_cheusov"
-WELCOME_IMG = "welcome.jpg"
+WELCOME_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome.jpg")
 
 STUDENTS_COUNT = "347"
 
@@ -790,7 +790,8 @@ async def cmd_start(message: Message, state: FSMContext):
         "Выбери цель — подберу твой маршрут:"
     )
 
-    if is_new and os.path.exists(WELCOME_IMG):
+    # Приветственное фото показываем на каждом /start (а не только новым).
+    if os.path.exists(WELCOME_IMG):
         try:
             await message.answer_photo(
                 photo=FSInputFile(WELCOME_IMG),
@@ -798,8 +799,10 @@ async def cmd_start(message: Message, state: FSMContext):
                 reply_markup=goal_kb()
             )
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"welcome photo failed: {e}")
+    else:
+        logging.warning(f"welcome photo not found at {WELCOME_IMG}")
     await message.answer(text, reply_markup=goal_kb())
 
 
