@@ -24,7 +24,7 @@ GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 MANAGER = "@nikolay_cheusov"
 WELCOME_IMG = "welcome.jpg"
 
-STUDENTS_COUNT = "2 347"
+STUDENTS_COUNT = "347"
 
 # Цены: anchor (обычная) → текущая (акция)
 PRICE_BASE = (5900, 2900)
