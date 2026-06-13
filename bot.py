@@ -256,10 +256,10 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_EXTRA = {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"}
 
 # Бесплатные текстовые модели (пробуем по очереди), затем дешёвый платный резерв.
+# Слаги :free на OpenRouter часто меняются/исчезают (404) — оставляем только рабочие,
+# мёртвые не держим, чтобы не тратить ~секунды на перебор пустых эндпоинтов.
 AI_FREE_MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-    "qwen/qwen-2.5-72b-instruct:free",
 ]
 AI_PAID_RESERVE = "openai/gpt-4o-mini"  # дешёвый резерв при исчерпании free-лимитов
 
@@ -331,7 +331,13 @@ AI_VISION_PAID = "openai/gpt-4o-mini"
 
 # Модель ГЕНЕРАЦИИ/редактирования изображений через OpenRouter (nano-banana).
 # Платная (~$0.04/картинка), поэтому в сценарии «первого чуда» — строго 1 раз на аккаунт.
-AI_IMAGE_MODEL = os.environ.get("OPENROUTER_IMAGE_MODEL", "google/gemini-2.5-flash-image-preview")
+# Слаги меняются (preview → GA), поэтому перебираем кандидатов; env OPENROUTER_IMAGE_MODEL
+# ставится первым, если задан.
+_img_env = os.environ.get("OPENROUTER_IMAGE_MODEL", "").strip()
+AI_IMAGE_MODELS = ([_img_env] if _img_env else []) + [
+    "google/gemini-2.5-flash-image",
+    "google/gemini-2.5-flash-image-preview",
+]
 
 # Системка для превращения «желания» юзера в качественный промпт для image-модели.
 WOW_PROMPT_SYSTEM = (
@@ -343,40 +349,42 @@ WOW_PROMPT_SYSTEM = (
 
 
 async def ai_generate_image(prompt: str, image_b64: str):
-    """Редактирует фото по промпту через OpenRouter (nano-banana). Возвращает bytes PNG или None."""
+    """Редактирует фото по промпту через OpenRouter (nano-banana). Возвращает bytes или None.
+    Перебирает кандидатов image-моделей (слаги меняются: preview → GA)."""
     if not OPENROUTER_KEY:
         return None
     content = [
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
     ]
-    payload = {
-        "model": AI_IMAGE_MODEL,
-        "messages": [{"role": "user", "content": content}],
-        "modalities": ["image", "text"],
-    }
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
     timeout = aiohttp.ClientTimeout(total=120)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-                data = await r.json()
-                if r.status != 200:
-                    raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
-                msg = data["choices"][0]["message"]
-                # OpenRouter возвращает картинки в message.images[].image_url.url (data URL)
-                imgs = msg.get("images") or []
-                for im in imgs:
-                    url = (im.get("image_url") or {}).get("url", "")
-                    if url.startswith("data:"):
-                        b64 = url.split(",", 1)[1]
-                        return base64.b64decode(b64)
-                logging.warning(f"image model returned no images: {str(data)[:200]}")
-                return None
-    except Exception as e:
-        logging.error(f"ai_generate_image failed: {e}")
-        return None
+    for model in AI_IMAGE_MODELS:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "modalities": ["image", "text"],
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
+                    data = await r.json()
+                    if r.status != 200:
+                        raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+                    msg = data["choices"][0]["message"]
+                    # Картинки приходят в message.images[].image_url.url (data URL)
+                    for im in (msg.get("images") or []):
+                        url = (im.get("image_url") or {}).get("url", "")
+                        if url.startswith("data:"):
+                            logging.info(f"image OK via OpenRouter:{model}")
+                            return base64.b64decode(url.split(",", 1)[1])
+                    logging.warning(f"image model {model} returned no images → next")
+        except Exception as e:
+            logging.warning(f"ai_generate_image {model} failed: {e} → next")
+            continue
+    logging.error("ai_generate_image: all image models exhausted")
+    return None
 
 
 async def ai_vision(system: str, user_text: str, image_b64: str, max_tokens: int = 350) -> str:
