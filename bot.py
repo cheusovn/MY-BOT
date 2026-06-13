@@ -24,6 +24,15 @@ from aiogram.client.session.aiohttp import AiohttpSession
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 817730727
+
+
+def is_admin(uid) -> bool:
+    """Владелец-админ — для полного теста бота без лимитов (время, генерации, гейты).
+    На обычных пользователей не влияет."""
+    try:
+        return int(uid) == ADMIN_ID
+    except (TypeError, ValueError):
+        return False
 BOT_USERNAME = "Trueman_ai_bot"
 TRIAL_DAY_1 = "https://t.me/+5ep9DPf7eNMzZjdi"
 TRIAL_DAY_2 = "https://t.me/+SpoNR-ahkJFiZTJi"
@@ -45,12 +54,12 @@ TOTAL_DAYS = 8
 HW_COOLDOWN = 4 * 3600
 # Темы дней (можно переименовать под реальное содержание уроков).
 DAY_TITLES = {
-    3: "Продающие картинки и карточки товара",
-    4: "AI-видео: рилсы и короткие ролики",
-    5: "Звук: озвучка, голоса и музыка",
-    6: "Собираем портфолио",
-    7: "Где брать заказы и сколько брать",
-    8: "Бонус: продвижение и поток клиентов",
+    3: "Персонажи и сториборды",
+    4: "Анимация, движение камеры и ретушь",
+    5: "Звук и видео — Suno и Kling",
+    6: "Создаём кино на Seedance 2.0",
+    7: "Цифровой аватар и GPT-агенты",
+    8: "Бонус: продвижение, продажи и фриланс",
 }
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
@@ -559,6 +568,8 @@ def touch_streak(uid: str):
 # ─── RATE-LIMIT: защита от спама AI / абуза механик ────────────────────────────────────────────────
 def rate_ok(uid: str, key: str, window: int) -> bool:
     """True, если с прошлого срабатывания key прошло >= window сек. Иначе False (заблокировано)."""
+    if is_admin(uid):
+        return True  # админ тестирует без задержек
     u = _ensure_game(uid)
     rl = u.setdefault("rl", {})
     last = rl.get(key, 0)
@@ -773,6 +784,8 @@ def mark_hw(uid: str, n: int):
 
 def course_gate(uid: str, n: int):
     """Возвращает (status, wait_left_сек). status: ok / pay / day8pay / hw / wait."""
+    if is_admin(uid):
+        return "ok", 0  # админ открывает любой день для теста
     if not is_buyer(uid):
         return "pay", 0
     if n == 8 and not has_day8(uid):
@@ -1288,14 +1301,14 @@ async def cb_day1(call: CallbackQuery):
     bonus = badge_toast("first_step") if new_badge else ""
 
     text = (
-        "🎓 <b>День 1 — начало</b>  <i>(+30 XP)</i>\n"
+        "🎓 <b>День 1 — первые гиперреалистичные фото</b>  <i>(+30 XP)</i>\n"
         "█░░ 33%\n\n"
         "Никакой скучной теории — сразу практика.\n\n"
         "<b>За ближайший час ты:</b>\n"
-        "▸ запустишь первую нейросеть\n"
-        "▸ сделаешь картинку, как у профи\n"
-        "▸ напишешь свой первый запрос\n"
-        "▸ поймёшь, где тут деньги\n\n"
+        "▸ запустишь Nano Banana 2 и GPT Image 2\n"
+        "▸ сделаешь первые гиперреалистичные фото\n"
+        "▸ напишешь свой первый рабочий промпт\n"
+        "▸ поймёшь, как это превратить в доход\n\n"
         "А после 2-го дня будет небольшой сюрприз 🙂\n\n"
         "👇 Открыть первый день:"
         + bonus
@@ -1308,8 +1321,9 @@ async def cb_day2(call: CallbackQuery):
     user_id = str(call.from_user.id)
 
     # ─── Гейт: 2-й день открывается только через 12 ч после старта 1-го ───
+    # (админ тестирует без задержки)
     day1_at = users.get(user_id, {}).get("day1_at")
-    if not day1_at:
+    if not is_admin(user_id) and not day1_at:
         await show_img(
             call, "day1.jpg",
             "🔒 <b>Сначала — первый день</b>\n\n"
@@ -1318,7 +1332,7 @@ async def cb_day2(call: CallbackQuery):
             day1_kb(),
         )
         return
-    left = DAY2_COOLDOWN - (now_ts() - day1_at)
+    left = 0 if is_admin(user_id) else DAY2_COOLDOWN - (now_ts() - (day1_at or now_ts()))
     if left > 0:
         when = f"~{int((left + 3599) // 3600)} ч" if left >= 3600 else f"~{max(1, int((left + 59) // 60))} мин"
         unlock = datetime.fromtimestamp(day1_at + DAY2_COOLDOWN).strftime("%H:%M %d.%m")
@@ -1346,14 +1360,14 @@ async def cb_day2(call: CallbackQuery):
     bonus = badge_toast("day1_done") if new_badge else ""
 
     text = (
-        "🔥 <b>День 2 — самое интересное</b>  <i>(+50 XP)</i>\n"
+        "🔥 <b>День 2 — промпты и GPT Image 2</b>  <i>(+50 XP)</i>\n"
         "██░ 66%\n\n"
-        "Первый день позади — ты уже умеешь больше,\n"
-        "чем думаешь. Сегодня про то, как превратить\n"
-        "это в реальные деньги.\n\n"
+        "Первый день позади! Сегодня — самое полезное:\n"
+        "как писать промпты, чтобы нейросеть выдавала\n"
+        "именно то, что ты задумал.\n\n"
         "<b>Внутри:</b>\n"
-        "▸ работы, за которые платят 5 000–30 000 ₽\n"
-        "▸ путь: навык → заказ → оплата\n\n"
+        "▸ формула рабочего промпта\n"
+        "▸ возможности GPT Image 2 на практике\n\n"
         "А в конце — небольшой подарок для тех, кто дошёл 🙂\n\n"
         "👇 Открыть второй день:"
         + bonus
@@ -2425,7 +2439,8 @@ async def cb_wow(call: CallbackQuery, state: FSMContext):
     track("wow_open", user_id)
 
     # 1 раз на аккаунт — если уже воспользовался, мягко уводим на GIFT-бот
-    if _ensure_game(user_id).get("wow_used"):
+    # (админ тестирует без лимита)
+    if not is_admin(user_id) and _ensure_game(user_id).get("wow_used"):
         await show(
             call,
             "✨ <b>Ты уже создал своё фото!</b>\n\n"
@@ -2606,9 +2621,11 @@ async def wow_wish(message: Message, state: FSMContext):
         return
 
     # Успех доставлен — фиксируем расход (1 раз на аккаунт) и награды
+    # (админу расход не фиксируем — тестирует без лимита)
     u = _ensure_game(user_id)
-    u["wow_used"] = True
-    save_users()
+    if not is_admin(user_id):
+        u["wow_used"] = True
+        save_users()
     add_xp(user_id, "wow")
     refresh_discount(user_id)
     give_badge(user_id, "wonder")
@@ -2708,7 +2725,7 @@ def gen_cancel_kb():
 @dp.callback_query(lambda c: c.data == "gen")
 async def cb_gen(call: CallbackQuery, state: FSMContext):
     user_id = str(call.from_user.id)
-    if gen_credits(user_id) <= 0:
+    if not is_admin(user_id) and gen_credits(user_id) <= 0:
         await show(
             call,
             "🎨 <b>У тебя пока нет генераций.</b>\n\n"
@@ -2721,10 +2738,11 @@ async def cb_gen(call: CallbackQuery, state: FSMContext):
         )
         return
     await state.set_state(GenState.waiting_photo)
+    credits_line = "Режим админа: без лимита ♾" if is_admin(user_id) else f"Доступно генераций: <b>{gen_credits(user_id)}</b>"
     await show(
         call,
-        f"🎨 <b>AI-ГЕНЕРАЦИЯ ФОТО</b>\n\n"
-        f"Доступно генераций: <b>{gen_credits(user_id)}</b>\n\n"
+        f"🎨 <b>AI-генерация фото</b>\n\n"
+        f"{credits_line}\n\n"
         "📸 Пришли фото — и опиши, что с ним сделать.\n\n"
         "👇 Жду фото:",
         gen_cancel_kb(),
@@ -2780,7 +2798,7 @@ async def gen_wish(message: Message, state: FSMContext):
     if not photo_id:
         await message.answer("Что-то потерялось 🙈 Начни заново 🎨", reply_markup=start_kb())
         return
-    if gen_credits(user_id) <= 0:
+    if not is_admin(user_id) and gen_credits(user_id) <= 0:
         await message.answer("Генерации закончились. Купи ещё в магазине 🛒", reply_markup=start_kb())
         return
 
@@ -2815,14 +2833,17 @@ async def gen_wish(message: Message, state: FSMContext):
         return
 
     # Кредит списываем только после успешной отправки картинки
+    admin = is_admin(user_id)
     left_after = max(0, gen_credits(user_id) - 1)
+    left_line = "Режим админа: без лимита ♾" if admin else (
+        f"Осталось генераций: <b>{left_after}</b>"
+        + ("" if left_after else " — пополни в 🛒 магазине за XP"))
     try:
         await message.answer_photo(
             photo=BufferedInputFile(img_bytes, filename="ai_gen.png"),
             caption=(
                 "🎨 <b>Готово!</b>\n\n"
-                f"Осталось генераций: <b>{left_after}</b>"
-                + ("" if left_after else " — пополни в 🛒 магазине за XP") + "\n\n"
+                f"{left_line}\n\n"
                 "Хочешь ещё? Жми «Сгенерировать снова» 👇"
             ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2839,7 +2860,8 @@ async def gen_wish(message: Message, state: FSMContext):
         )
         return
 
-    use_gen_credit(user_id)
+    if not admin:
+        use_gen_credit(user_id)
     track("gen_done", user_id)
 
 

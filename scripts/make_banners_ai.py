@@ -292,41 +292,41 @@ def render_author():
 
 
 BANNERS = [
-    ("day1", "День 1 · бесплатно", "Твой первый результат за вечер",
-     "Запустишь нейросеть и сделаешь первую картинку сам",
+    ("day1", "День 1 · бесплатно", "Первые гиперреалистичные фото",
+     "Nano Banana 2 и GPT Image 2 — с нуля",
      "A cozy home desk in the evening: an open laptop glowing softly with a freshly created "
      "AI artwork on its screen, a warm desk lamp, a steaming mug of tea, an open notebook "
      "and pen, a small plant, calm homely atmosphere, the quiet joy of a first success."),
-    ("day2", "День 2 · бесплатно", "Как на этом зарабатывают",
-     "Покажу работы, за которые людям реально платят",
+    ("day2", "День 2 · бесплатно", "Промпты и GPT Image 2",
+     "Пишем запросы, которые дают результат",
      "A clean modern desk: a laptop screen showing polished product photos and a freelance "
      "order confirmation, a smartphone with a payment notification beside it, a cup of "
      "coffee, soft green accent light, evening city softly blurred through the window."),
-    ("day3", "День 3 · курс", "Продающие картинки и карточки",
-     "Делаешь визуал, который продаёт",
-     "A premium e-commerce still life: a sleek product photo displayed on a tablet next to "
-     "a neatly designed marketplace product card mockup, soft studio light, minimal props, "
-     "elegant commercial look, warm green accent glow."),
-    ("day4", "День 4 · курс", "AI-видео: рилсы и ролики",
-     "Короткие видео, которые досматривают",
-     "A smartphone on a small tripod with a softbox ring light, the screen showing a vibrant "
-     "vertical short-video frame with a glowing play button, cozy creator desk, bokeh, "
-     "warm green accent glow, no people."),
-    ("day5", "День 5 · курс", "Звук: голос и музыка",
-     "Озвучка, голоса и музыка нейросетью",
-     "A cozy home studio still life: a condenser microphone and headphones on a desk, a "
-     "laptop screen showing a glowing audio waveform and music timeline, soft warm light "
-     "with green accents, no people."),
-    ("day6", "День 6 · курс", "Собираем портфолио",
-     "Работы, которые приносят заказы",
-     "A tablet and a clean wall showing an organized grid of polished creative works "
-     "(images, thumbnails), tidy minimal workspace, premium gallery feel, soft light with "
-     "a green accent glow, no people."),
-    ("day7", "День 7 · курс", "Где брать заказы",
-     "Навык → клиент → деньги",
-     "A laptop on a desk showing a freelance marketplace with a new order and a chat bubble "
-     "saying accepted, a phone with a payment notification beside it, a cup of coffee, "
-     "warm green accent light, no people."),
+    ("day3", "День 3 · курс", "Персонажи и сториборды",
+     "Придумываем героев и раскадровки с ИИ",
+     "A creative desk still life: a tablet and monitor showing a character design concept "
+     "sheet and a row of storyboard sketch frames, colored pencils and notes nearby, "
+     "concept-art studio vibe, warm green accent glow, no real people."),
+    ("day4", "День 4 · курс", "Анимация и движение камеры",
+     "Оживляем кадры и правим фото",
+     "A creator desk: a wide monitor showing a video animation timeline with motion-path "
+     "curves and a before/after photo retouch, a small camera slider and gimbal on the desk, "
+     "dynamic motion feel, warm green accent glow, no people."),
+    ("day5", "День 5 · курс", "Звук и видео — Suno и Kling",
+     "Музыка, песни и ролики нейросетью",
+     "A cozy home studio still life: a condenser microphone and headphones, one screen with "
+     "a glowing audio waveform and music timeline, another screen with vivid video clip "
+     "frames, soft warm light with green accents, no people."),
+    ("day6", "День 6 · курс", "Создаём кино — Seedance 2.0",
+     "Снимаем настоящий фильм нейросетью",
+     "A cinematic still on a wide monitor showing a dramatic film frame, a clapperboard and "
+     "subtle film-reel motifs on a dark desk, moody movie-making atmosphere, soft green "
+     "accent glow, no people."),
+    ("day7", "День 7 · курс", "Цифровой аватар и GPT-агенты",
+     "Свой аватар и умные ассистенты",
+     "A futuristic but cozy desk: a screen showing a glowing stylized 3D digital avatar bust "
+     "and floating chat-bot agent UI bubbles around it, premium tech feel, acid-green and "
+     "mint glow, abstract avatar with no real human face, no people."),
     ("day8", "День 8 · бонус", "Продвижение и продажи",
      "SMM, маркетинг и поток клиентов",
      "A dark premium dashboard still life: a rising growth chart on a screen with floating "
