@@ -31,6 +31,8 @@ GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 MANAGER = "@nikolay_cheusov"
 WELCOME_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome.jpg")
+# Брендовые шапки-баннеры экранов (генерируются scripts/make_banners.py)
+IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
 
 STUDENTS_COUNT = "347"
 
@@ -985,6 +987,32 @@ async def show(call: CallbackQuery, text: str, kb: InlineKeyboardMarkup):
         logging.warning(f"show() answer failed: {e}")
 
 
+async def show_img(call: CallbackQuery, img_name: str, text: str, kb: InlineKeyboardMarkup):
+    """Как show(), но с брендовой шапкой-картинкой (фото + подпись).
+    Безопасно деградирует к тексту, если картинки нет, подпись длиннее лимита
+    Telegram (1024) или отправка фото не удалась."""
+    try:
+        await call.answer()
+    except Exception:
+        pass
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    path = os.path.join(IMG_DIR, img_name)
+    if os.path.exists(path) and len(text) <= 1024:
+        try:
+            await call.message.answer_photo(
+                photo=FSInputFile(path), caption=text, reply_markup=kb)
+            return
+        except Exception as e:
+            logging.warning(f"show_img() photo failed: {e} → text fallback")
+    try:
+        await call.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception as e:
+        logging.warning(f"show_img() answer failed: {e}")
+
+
 # ─── ХЭНДЛЕРЫ ──────────────────────────────────────────────────────────────────────────────
 
 @dp.message(CommandStart())
@@ -1104,24 +1132,14 @@ async def cb_free_gift(call: CallbackQuery):
     give_badge(user_id, "explorer")
     text = (
         "🎁 <b>100+ НЕЙРОСЕТЕЙ — БЕСПЛАТНО НА 100+ ДНЕЙ</b>\n\n"
-        "<b>Рыночная цена этого набора: ~38 000 ₽/год.</b>\n"
-        "Отдаю тебе <b>бесплатно</b> — без карты и оплаты.\n\n"
-        "<b>Что внутри:</b>\n"
-        "🎨 Midjourney — изображения рекламных студий\n"
-        "🎬 Kling, Runway, Veo — AI-видео за минуты\n"
-        "🤖 ChatGPT Plus — тексты, идеи, сценарии\n"
-        "🎵 Suno — музыка и саундтреки\n"
-        "🔊 ElevenLabs — реалистичная озвучка\n"
-        "📸 Nano Banana — фото и визуалы\n"
-        "+ ещё <b>95+ инструментов</b>\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "⚠️ <b>Почему бесплатно?</b>\n"
-        "Я хочу, чтобы ты попробовал — и сам увидел,\n"
-        "что AI реально может. Без воды и обещаний.\n\n"
-        f"🔥 Уже <b>{STUDENTS_COUNT}+ человек</b> забрали подарок.\n"
-        "👇 Нажми и получи прямо сейчас:"
+        "Рыночная цена набора ~38 000 ₽/год. Тебе — <b>бесплатно</b>, без карты.\n\n"
+        "🎨 Midjourney · 🎬 Kling, Runway, Veo · 🤖 ChatGPT\n"
+        "🎵 Suno · 🔊 ElevenLabs · 📸 Nano Banana + 95 ещё\n\n"
+        "Хочу, чтобы ты сам увидел, что AI реально может.\n"
+        f"🔥 Уже <b>{STUDENTS_COUNT}+ человек</b> забрали подарок.\n\n"
+        "👇 Получи прямо сейчас:"
     )
-    await show(call, text, free_gift_kb())
+    await show_img(call, "gift.jpg", text, free_gift_kb())
 
 
 @dp.callback_query(lambda c: c.data == "day1")
@@ -1135,23 +1153,17 @@ async def cb_day1(call: CallbackQuery):
 
     text = (
         "🎓 <b>ДЕНЬ 1 — ПРОГРЕСС: █░░ 33%</b>  <i>(+30 XP)</i>\n\n"
-        "Ты в бесплатном доступе к полному курсу.\n"
-        "Не вводная лекция, а <b>реальные уроки</b>.\n\n"
-        "<b>Что сделаешь за ближайшие 40 минут:</b>\n"
-        "▸ Запустишь нейросеть — без регистраций\n"
-        "▸ Создашь изображения уровня эксперта\n"
-        "▸ Напишешь первый рабочий промпт\n"
-        "▸ Увидишь, <i>где именно деньги в AI</i>\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "💬 <i>«После 1-го дня понял: это не сложно.\n"
-        "Просто раньше боялся начать»</i>\n"
-        "<b>— Алексей, студент</b>\n\n"
-        "⚠️ <b>Важно:</b> закрытое предложение и бонусы\n"
-        "откроются <b>только после 2-го дня.</b>\n\n"
+        "Это не вводная лекция, а <b>реальные уроки</b>.\n\n"
+        "<b>За ближайшие 40 минут ты:</b>\n"
+        "▸ запустишь нейросеть без регистраций\n"
+        "▸ создашь изображения уровня эксперта\n"
+        "▸ напишешь первый рабочий промпт\n"
+        "▸ увидишь, <i>где именно деньги в AI</i>\n\n"
+        "⚠️ Закрытое предложение и бонусы откроются <b>после 2-го дня</b>.\n\n"
         "👇 Открывай прямо сейчас:"
         + bonus
     )
-    await show(call, text, day1_kb())
+    await show_img(call, "day1.jpg", text, day1_kb())
 
 
 @dp.callback_query(lambda c: c.data == "day2")
@@ -1165,25 +1177,17 @@ async def cb_day2(call: CallbackQuery):
 
     text = (
         "🔥 <b>ДЕНЬ 2 — ПРОГРЕСС: ██░ 66%</b>  <i>(+50 XP)</i>\n\n"
-        "День 1 пройден — ты уже не новичок.\n"
-        "Сегодня пересечёшь черту между\n"
-        "«просто интересно» и <b>«могу заработать.»</b>\n\n"
+        "День 1 пройден — ты уже не новичок. Сегодня — черта между\n"
+        "«просто интересно» и <b>«могу заработать».</b>\n\n"
         "<b>Что внутри:</b>\n"
-        "▸ Профессиональные генерации\n"
-        "▸ Свои промпты, без шаблонов\n"
-        "▸ Работы, за которые <b>платят 5–30k ₽</b>\n"
-        "▸ Воронка: навык → заказ → деньги\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "💬 <i>«После 2-го дня взяла заказ на 8 000 ₽.\n"
-        "Не верила, что так быстро получится»</i>\n"
-        "<b>— Марина, 3 недели обучения</b>\n\n"
-        "⚡ После 2-го дня открою\n"
-        "<b>ЗАКРЫТОЕ предложение + 3 бонуса.</b>\n"
-        "Только для тех, кто дошёл до конца.\n\n"
+        "▸ профессиональные генерации и свои промпты\n"
+        "▸ работы, за которые <b>платят 5–30k ₽</b>\n"
+        "▸ воронка: навык → заказ → деньги\n\n"
+        "⚡ После 2-го дня открою <b>закрытое предложение + 3 бонуса</b> — только для дошедших.\n\n"
         "👇 Открывай:"
         + bonus
     )
-    await show(call, text, day2_kb())
+    await show_img(call, "day2.jpg", text, day2_kb())
 
 
 @dp.callback_query(lambda c: c.data == "special_tariffs")
@@ -1217,33 +1221,19 @@ async def cb_special_tariffs(call: CallbackQuery):
         disc_block = ""
 
     text = (
-        "🔐 <b>ЗАКРЫТОЕ ПРЕДЛОЖЕНИЕ — ПРОГРЕСС: ███ 100%</b>\n"
+        "🔐 <b>ЗАКРЫТОЕ ПРЕДЛОЖЕНИЕ — 100%</b>\n"
         "Ты прошёл 2 дня. Это видят единицы.\n\n"
-        f"⏳ Сгорает до: <b>{deadline}</b> (24 часа)\n"
-        f"⚠️ Мест по этой цене: <b>{s}</b>\n\n"
+        f"⏳ Сгорает до <b>{deadline}</b> · мест по цене: <b>{s}</b>\n\n"
         f"{disc_block}"
-        "━━━━━━━━━━━━━━━━\n"
         "⭐ <b>VIP С КУРАТОРОМ</b>\n"
-        "<s>9 900 ₽</s> → <b>4 970 ₽</b>  (экономия 4 930 ₽)\n"
-        "Один раз — и доступ остаётся навсегда.\n\n"
-        "Что внутри:\n"
-        "✅ Все 7 дней курса + доступ навсегда\n"
-        "✅ Личный куратор + разбор твоих работ\n"
-        "✅ Чат поддержки 24/7\n\n"
-        "🎁 <b>+ БОНУСЫ только сегодня:</b>\n"
-        "   1) Гайд «30 источников заказов» — <s>2 990 ₽</s>\n"
-        "   2) 100+ готовых промптов — <s>1 990 ₽</s>\n"
-        "   3) Шаблон продающего портфолио — <s>1 490 ₽</s>\n"
-        "   <b>Итого бонусов на 6 470 ₽ — бесплатно.</b>\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "🛡 <b>Почему без риска:</b>\n"
-        "Сначала ты <b>2 дня бесплатно</b> делаешь реальный\n"
-        "результат — и только потом решаешь, продолжать ли.\n"
-        "Доступ к материалам и поддержка остаются с тобой.\n\n"
-        f"{social_proof()}\n\n"
+        "<s>9 900 ₽</s> → <b>4 970 ₽</b> · один раз, навсегда\n"
+        "✅ Все 7 дней + куратор + разбор работ + чат 24/7\n\n"
+        "🎁 <b>+ бонусы только сегодня</b> (на 6 470 ₽ — бесплатно):\n"
+        "гайд «30 источников заказов», 100+ промптов, шаблон портфолио\n\n"
+        "🛡 Без риска: 2 дня ты уже сделал бесплатно — материалы остаются с тобой.\n\n"
         "👇 Выбирай:"
     )
-    await show(call, text, tariffs_kb(s))
+    await show_img(call, "special.jpg", text, tariffs_kb(s))
 
 
 @dp.callback_query(lambda c: c.data == "tariffs")
@@ -1254,40 +1244,22 @@ async def cb_tariffs(call: CallbackQuery):
     s = get_spots()
 
     text = (
-        "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n\n"
-        f"⚠️ Мест по акционной цене: <b>{s}</b>\n"
-        f"{social_proof()}\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "⭐ <b>VIP С КУРАТОРОМ</b>  ← берут 7 из 10\n"
-        "<s>9 900 ₽</s> → <b>4 970 ₽</b>  · один раз, навсегда\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "✅ Все 7 дней курса\n"
-        "✅ Личный куратор + разбор твоих работ\n"
-        "✅ Закрытый чат 24/7\n"
-        "✅ Доступ навсегда\n"
-        "🎁 + Бонусы на 6 470 ₽ бесплатно\n\n"
-        "━━━━━━━━━━━━━━━━\n"
+        "💰 <b>ТАРИФЫ ОБУЧЕНИЯ</b>\n"
+        f"⚠️ Мест по акции: <b>{s}</b> · один раз, доступ навсегда\n\n"
+        "⭐ <b>VIP С КУРАТОРОМ</b> — берут 7 из 10\n"
+        "<s>9 900 ₽</s> → <b>4 970 ₽</b>\n"
+        "Все 7 дней + куратор + разбор работ + чат 24/7\n"
+        "🎁 + бонусы на 6 470 ₽ бесплатно\n\n"
         "🚀 <b>PRO + ПРОДВИЖЕНИЕ</b>\n"
-        "<s>14 900 ₽</s> → <b>7 970 ₽</b>  · один раз, навсегда\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "✅ Всё из VIP\n"
-        "💼 Где брать заказы — площадки + схемы\n"
-        "🔥 Вирусный контент — что залетает\n"
-        "📢 Реклама без слива бюджета\n"
-        "📱 SMM с нуля — до 1 млн просмотров\n\n"
-        "━━━━━━━━━━━━━━━━\n"
+        "<s>14 900 ₽</s> → <b>7 970 ₽</b>\n"
+        "Всё из VIP + где брать заказы, вирусный контент, реклама, SMM\n\n"
         "📦 <b>БАЗОВЫЙ</b>\n"
-        "<s>5 900 ₽</s> → <b>2 970 ₽</b>  · один раз, навсегда\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "✅ Все 7 дней курса\n"
-        "✅ Доступ навсегда\n"
-        "❌ Без куратора и бонусов\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "🛡 <b>Без риска:</b> сначала 2 дня бесплатно,\n"
-        "потом решаешь. Доступ остаётся навсегда.\n\n"
+        "<s>5 900 ₽</s> → <b>2 970 ₽</b>\n"
+        "Все 7 дней курса. Без куратора и бонусов\n\n"
+        "🛡 Без риска: сначала 2 дня бесплатно, потом решаешь.\n\n"
         "👇 Выбери тариф:"
     )
-    await show(call, text, tariffs_kb(s))
+    await show_img(call, "tariffs.jpg", text, tariffs_kb(s))
 
 
 @dp.callback_query(lambda c: c.data == "results")
@@ -1315,7 +1287,7 @@ async def cb_results(call: CallbackQuery):
         "🎓 <b>Следующий кейс — твой.</b>\n"
         "Начни бесплатно:"
     )
-    await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+    await show_img(call, "results.jpg", text, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Попробовать курс бесплатно (2 дня)", callback_data="day1")],
         [InlineKeyboardButton(text="🔥 Подарок — 100+ нейросетей", callback_data="free_gift")],
         [InlineKeyboardButton(text="💰 Смотреть тарифы", callback_data="tariffs")],
@@ -1985,7 +1957,7 @@ async def cb_wheel(call: CallbackQuery):
         "⚠️ Приз действует <b>только при оплате сегодня</b>.\n\n"
         "👇 Крути:"
     )
-    await show(call, text, wheel_kb())
+    await show_img(call, "wheel.jpg", text, wheel_kb())
 
 
 @dp.callback_query(lambda c: c.data == "wheel_spin")
@@ -2072,7 +2044,7 @@ async def cb_wow(call: CallbackQuery, state: FSMContext):
         "🎁 Это бесплатно — <b>1 раз на аккаунт.</b>\n\n"
         "👇 Жду фото:"
     )
-    await show(call, text, wow_cancel_kb())
+    await show_img(call, "wow.jpg", text, wow_cancel_kb())
 
 
 @dp.callback_query(lambda c: c.data == "wow_cancel")
