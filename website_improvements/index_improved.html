@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRUE AI ACADEMY — 7 дней до первого заработка на нейросетях</title>
+  <meta name="description" content="За 7 дней — от нуля до первого оплаченного видео или карточки товара. 800–2 500 ₽ за проект. Без кода, без опыта, без вложений. Первые 2 дня бесплатно." />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="TRUE AI ACADEMY — 7 дней до первого заработка" />
+  <meta property="og:description" content="За 7 дней — от нуля до первого оплаченного видео или карточки. 800–2 500 ₽ за проект. Первые 2 дня бесплатно." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://trueaiacademy.ru/" />
+  <meta property="og:image" content="og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="ru_RU" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TRUE AI ACADEMY — 7 дней до первого заработка" />
+  <meta name="twitter:description" content="За 7 дней — от нуля до первого оплаченного видео или карточки. Первые 2 дня бесплатно." />
+  <meta name="twitter:image" content="og-image.jpg" />
+
+  <!-- Canonical -->
+  <link rel="canonical" href="https://trueaiacademy.ru/" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;800;900&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css" />
+
+  <style>
+    /* ─── DESIGN TOKENS ─── */
+    :root {
+      --acid: #C8FF00;
+      --mint: #00FF88;
+      --black: #050604;
+      --off-white: #F2F5EC;
+      --glass: rgba(255,255,255,0.04);
+      --glass-border: rgba(200,255,0,0.12);
+      --radius: 20px;
+      --transition: 0.4s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ─── RESET & BASE ─── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; scroll-behavior: smooth; }
+    body {
+      background: var(--black);
+      color: var(--off-white);
+      font-family: 'Manrope', sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+      overflow-x: hidden;
+      cursor: none;
+    }
+    a { color: inherit; text-decoration: none; }
+    b, strong { font-weight: 700; }
+    s { opacity: 0.5; }
+    em { font-style: normal; color: var(--acid); }
+    img { max-width: 100%; display: block; }
+
+    /* ─── CURSOR ─── */
+    #cursor {
+      position: fixed;
+      width: 16px;
+      height: 16px;
+      background: var(--acid);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      transition: transform 0.15s, width 0.2s, height 0.2s, opacity 0.2s;
+      mix-blend-mode: difference;
+    }
+    #cursor.grow { width: 40px; height: 40px; opacity: 0.6; }
+
+    /* ─── THREE.JS CANVAS ─── */
+    #bg-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ─── LAYOUT ─── */
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .section { padding: 100px 0; position: relative; z-index: 1; }
+
+    /* ─── BUTTONS ─── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 16px 36px;
+      border-radius: 100px;
+      font-family: 'Manrope', sans-serif;
+      font-weight: 800;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: var(--transition);
+      border: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .btn--primary {
+      background: var(--acid);
+      color: var(--black);
+      border-color: var(--acid);
+      box-shadow: 0 0 40px rgba(200,255,0,0.3);
+    }
+    .btn--primary:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 0 60px rgba(200,255,0,0.5);
+    }
+    .btn--ghost {
+      background: transparent;
+      color: var(--acid);
+      border-color: var(--acid);
+    }
+    .btn--ghost:hover {
+      background: rgba(200,255,0,0.1);
+    }
+    .btn--large { padding: 20px 48px; font-size: 1.1rem; }
+    .btn--sm { padding: 10px 20px; font-size: 0.85rem; }
+
+    /* ─── TYPOGRAPHY ─── */
+    .section__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 800;
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+    .section__sub {
+      font-size: 1.1rem;
+      opacity: 0.7;
+      margin-bottom: 48px;
+    }
+
+    /* ─── REVEAL ANIMATIONS ─── */
+    .reveal, .reveal-fast {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .reveal-fast { transition-duration: 0.4s; }
+    .reveal.visible, .reveal-fast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ─── TOAST CONTAINER ─── */
+    #toastContainer {
+      position: fixed;
+      bottom: 100px;
+      left: 24px;
+      z-index: 8000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(20,20,18,0.95);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(20px);
+      padding: 12px 16px;
+      border-radius: 14px;
+      max-width: 300px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      pointer-events: auto;
+      animation: toastIn 0.4s ease forwards;
+    }
+    .toast.out { animation: toastOut 0.4s ease forwards; }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+    @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-20px); } }
+    .toast__avatar {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--acid);
+      color: var(--black);
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.65rem;
+      font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .toast__body { font-size: 0.8rem; line-height: 1.4; }
+    .toast__name { font-weight: 700; color: var(--acid); }
+    .toast__city { opacity: 0.5; font-size: 0.72rem; }
+
+    /* ─── STICKY CTA ─── */
+    #stickyCta {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(5,6,4,0.95);
+      border-top: 1px solid var(--glass-border);
+      backdrop-filter: blur(20px);
+      padding: 14px 24px;
+      z-index: 7000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      transform: translateY(100%);
+      transition: transform 0.4s ease;
+    }
+    #stickyCta.visible { transform: translateY(0); }
+    #stickyCta.hidden { transform: translateY(100%); }
+    .sticky-cta__text { font-size: 0.9rem; opacity: 0.8; }
+    .sticky-cta__text b { color: var(--acid); }
+
+    /* ─── HERO ─── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      padding: 120px 0 80px;
+      position: relative;
+      z-index: 1;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 800px; height: 800px;
+      background: radial-gradient(circle, rgba(200,255,0,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero__inner { max-width: 780px; }
+    .hero__badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      padding: 8px 18px;
+      border-radius: 100px;
+      font-size: 0.85rem;
+      margin-bottom: 32px;
+      backdrop-filter: blur(10px);
+    }
+    .badge__dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 8px var(--mint);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.3); }
+    }
+    .hero__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 900;
+      font-size: clamp(2.2rem, 6vw, 4.2rem);
+      line-height: 1.1;
+      margin-bottom: 28px;
+      letter-spacing: -0.02em;
+    }
+    .hero__sub {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      opacity: 0.8;
+      margin-bottom: 40px;
+      max-width: 600px;
+      line-height: 1.7;
+    }
+    .hero__cta-group { margin-bottom: 16px; }
+    .hero__cta-note {
+      font-size: 0.82rem;
+      opacity: 0.55;
+      margin-top: 12px;
+    }
+    .hero__stats {
+      display: flex;
+      gap: 40px;
+      margin-top: 48px;
+      padding-top: 40px;
+      border-top: 1px solid var(--glass-border);
+      flex-wrap: wrap;
+    }
+    .stat { display: flex; flex-direction: column; gap: 4px; }
+    .stat b {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--acid);
+      line-height: 1;
+    }
+    .stat span { font-size: 0.8rem; opacity: 0.6; max-width: 120px; line-height: 1.3; }
+    .jm { font-family: 'JetBrains Mono', monospace !important; }
+
+    /* ─── PAIN ─── */
+    .pain__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px;
+      margin-top: 48px;
+    }
+    .pain__card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(10px);
+      transition: var(--transition);
+    }
+    .pain__card:hover {
+      border-color: rgba(200,255,0,0.3);
+      transform: translateY(-4px);
+    }
+    .pain__icon { font-size: 2rem; margin-bottom: 16px; }
+    .pain__card p { font-size: 0.95rem; line-height: 1.6; opacity: 0.85; }
+
+    /* ─── STEPS / HOW IT WORKS ─── */
+    .steps__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 24px;
+      margin-top: 48px;
+    }
+    .step__card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      position: relative;
+      backdrop-filter: blur(10px);
+    }
+    .step__num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 3rem;
+      font-weight: 700;
+      color: var(--acid);
+      opacity: 0.3;
+      line-height: 1;
+      margin-bottom: 12px;
+    }
+    .step__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+    .step__text { font-size: 0.9rem; opacity: 0.7; line-height: 1.5; }
+
+    /* ─── SHIFT ─── */
+    .shift {
+      background: linear-gradient(135deg, rgba(200,255,0,0.04) 0%, transparent 60%);
+    }
+    .shift__inner {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: 28px;
+      padding: 56px;
+      backdrop-filter: blur(10px);
+    }
+    .shift__list { margin: 40px 0; display: flex; flex-direction: column; gap: 20px; }
+    .shift__item {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      font-size: 1.05rem;
+      line-height: 1.6;
+    }
+    .shift__check {
+      color: var(--acid);
+      font-size: 1.2rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .shift__item p { opacity: 0.85; }
+
+    /* ─── PROGRAM ─── */
+    .program__days {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 48px;
+    }
+    .day__card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 24px;
+      backdrop-filter: blur(10px);
+      transition: var(--transition);
+    }
+    .day__card:hover { border-color: rgba(200,255,0,0.3); }
+    .day__label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--acid);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .day__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+    }
+    .day__desc { font-size: 0.88rem; opacity: 0.65; line-height: 1.5; }
+
+    /* ─── AUTHOR ─── */
+    .author__inner {
+      display: grid;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 56px;
+      align-items: center;
+    }
+    .author__photo {
+      border-radius: 24px;
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      aspect-ratio: 3/4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 6rem;
+      overflow: hidden;
+    }
+    .author__name {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 800;
+      font-size: 1.8rem;
+      margin-bottom: 8px;
+    }
+    .author__role { color: var(--acid); font-size: 0.9rem; margin-bottom: 20px; }
+    .author__bio { opacity: 0.75; line-height: 1.7; margin-bottom: 24px; }
+    .author__facts { display: flex; flex-direction: column; gap: 12px; }
+    .author__fact {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.9rem;
+    }
+    .author__fact span:first-child { color: var(--acid); font-size: 1.1rem; }
+
+    /* ─── REVIEWS ─── */
+    .reviews__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-top: 48px;
+    }
+    .review {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(10px);
+      position: relative;
+      transition: var(--transition);
+    }
+    .review:hover { border-color: rgba(200,255,0,0.25); transform: translateY(-4px); }
+    .review__stars { color: var(--acid); font-size: 1rem; margin-bottom: 16px; letter-spacing: 2px; }
+    .review blockquote {
+      font-size: 0.92rem;
+      line-height: 1.65;
+      opacity: 0.85;
+      margin-bottom: 20px;
+      font-style: italic;
+    }
+    .review figcaption {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .review__avatar {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--acid), var(--mint));
+      color: var(--black);
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.65rem;
+      font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .review figcaption b { display: block; font-size: 0.9rem; }
+    .review figcaption small { font-size: 0.75rem; opacity: 0.5; }
+    .review__verified {
+      position: absolute;
+      top: 20px; right: 20px;
+      font-size: 0.7rem;
+      color: var(--mint);
+      background: rgba(0,255,136,0.1);
+      border: 1px solid rgba(0,255,136,0.2);
+      padding: 4px 10px;
+      border-radius: 100px;
+    }
+
+    /* ─── GUARANTEE ─── */
+    .guarantee__card {
+      background: linear-gradient(135deg, rgba(0,255,136,0.06) 0%, var(--glass) 100%);
+      border: 1px solid rgba(0,255,136,0.2);
+      border-radius: 28px;
+      padding: 56px;
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+    .guarantee__icon { font-size: 4rem; margin-bottom: 24px; }
+    .guarantee__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 800;
+      font-size: 2rem;
+      margin-bottom: 20px;
+    }
+    .guarantee__text { font-size: 1rem; opacity: 0.8; line-height: 1.8; margin-bottom: 32px; }
+    .guarantee__badges {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+    }
+    .guarantee__badge {
+      background: rgba(0,255,136,0.1);
+      border: 1px solid rgba(0,255,136,0.25);
+      color: var(--mint);
+      padding: 8px 20px;
+      border-radius: 100px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    /* ─── OFFER ─── */
+    .offer__card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: 28px;
+      padding: 56px;
+      backdrop-filter: blur(10px);
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .offer__anchor {
+      font-size: 0.9rem;
+      opacity: 0.6;
+      margin-bottom: 16px;
+    }
+    .offer__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 800;
+      font-size: clamp(1.6rem, 3vw, 2.4rem);
+      line-height: 1.2;
+      margin-bottom: 36px;
+    }
+    .offer__list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+    .offer__list li {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .offer__list li i {
+      color: var(--acid);
+      font-style: normal;
+      font-size: 1.1rem;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .offer__price-block {
+      background: rgba(200,255,0,0.05);
+      border: 1px solid rgba(200,255,0,0.2);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 28px;
+    }
+    .offer__price-main {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .offer__price-free {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 3rem;
+      font-weight: 700;
+      color: var(--acid);
+      line-height: 1;
+    }
+    .offer__price-period { font-size: 1rem; opacity: 0.6; }
+    .offer__price-note { font-size: 0.85rem; opacity: 0.55; }
+    .offer__referral {
+      margin-top: 28px;
+      background: rgba(0,255,136,0.05);
+      border: 1px solid rgba(0,255,136,0.15);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+    .offer__referral-inner {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .offer__referral-icon { font-size: 2rem; flex-shrink: 0; }
+    .offer__referral b { display: block; margin-bottom: 6px; color: var(--mint); }
+    .offer__referral p { font-size: 0.85rem; opacity: 0.7; margin-bottom: 12px; }
+
+    /* ─── AUDIENCE ─── */
+    .audience__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin-top: 48px;
+    }
+    .audience__card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(10px);
+      transition: var(--transition);
+    }
+    .audience__card:hover { border-color: rgba(200,255,0,0.3); transform: translateY(-4px); }
+    .audience__icon { font-size: 2rem; margin-bottom: 12px; }
+    .audience__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+    .audience__desc { font-size: 0.85rem; opacity: 0.65; line-height: 1.5; }
+
+    /* ─── FAQ ─── */
+    .faq__list { margin-top: 48px; display: flex; flex-direction: column; gap: 12px; }
+    .faq__item {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+    .faq__question {
+      width: 100%;
+      background: none;
+      border: none;
+      color: var(--off-white);
+      text-align: left;
+      padding: 22px 28px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      transition: var(--transition);
+    }
+    .faq__question:hover { color: var(--acid); }
+    .faq__arrow {
+      font-size: 1.2rem;
+      transition: transform 0.3s ease;
+      flex-shrink: 0;
+      color: var(--acid);
+    }
+    .faq__item.open .faq__arrow { transform: rotate(45deg); }
+    .faq__answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.4s ease, padding 0.3s ease;
+    }
+    .faq__answer-inner {
+      padding: 0 28px 22px;
+      font-size: 0.92rem;
+      opacity: 0.75;
+      line-height: 1.7;
+    }
+    .faq__item.open .faq__answer { max-height: 400px; }
+
+    /* ─── FINAL CTA ─── */
+    .final-cta {
+      padding: 120px 0;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .final-cta::before {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(circle, rgba(200,255,0,0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .final-cta__title {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 900;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      line-height: 1.1;
+      margin-bottom: 20px;
+    }
+    .final-cta__sub { font-size: 1.1rem; opacity: 0.7; margin-bottom: 48px; }
+
+    /* ─── COUNTDOWN ─── */
+    .countdown {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin-bottom: 48px;
+      flex-wrap: wrap;
+    }
+    .countdown__unit {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .countdown__num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 3rem;
+      font-weight: 700;
+      color: var(--acid);
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      padding: 16px 24px;
+      border-radius: 16px;
+      min-width: 90px;
+      text-align: center;
+      line-height: 1;
+    }
+    .countdown__label { font-size: 0.75rem; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* ─── SPOTS SCARCITY ─── */
+    .spots-bar {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: 100px;
+      overflow: hidden;
+      height: 8px;
+      margin: 24px auto;
+      max-width: 400px;
+    }
+    .spots-bar__fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--acid), var(--mint));
+      border-radius: 100px;
+      width: 73%;
+      box-shadow: 0 0 12px rgba(200,255,0,0.4);
+    }
+    .spots-note {
+      font-size: 0.85rem;
+      opacity: 0.55;
+      margin-bottom: 32px;
+    }
+    .spots-note b { color: var(--acid); opacity: 1; }
+
+    /* ─── DIVIDER ─── */
+    .divider {
+      border: none;
+      height: 1px;
+      background: var(--glass-border);
+      margin: 0;
+    }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 768px) {
+      .section { padding: 72px 0; }
+      .hero { padding: 100px 0 60px; }
+      .hero__stats { gap: 24px; }
+      .author__inner { grid-template-columns: 1fr; }
+      .author__photo { aspect-ratio: 1; max-width: 200px; font-size: 5rem; }
+      .shift__inner { padding: 32px; }
+      .offer__card { padding: 32px 24px; }
+      .guarantee__card { padding: 40px 24px; }
+      #stickyCta { flex-direction: column; align-items: flex-start; }
+      .reviews__grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Custom Cursor -->
+  <div id="cursor"></div>
+
+  <!-- Three.js particle canvas -->
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Toast notifications -->
+  <div id="toastContainer"></div>
+
+  <!-- Sticky CTA bar -->
+  <div id="stickyCta">
+    <div class="sticky-cta__text">
+      <b>Первые 2 дня бесплатно</b> — карта не нужна
+    </div>
+    <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--primary" target="_blank" rel="noopener">
+      🎁 Начать бесплатно
+    </a>
+  </div>
+
+  <!-- ══════════════════════════════════
+       1. HERO
+  ══════════════════════════════════ -->
+  <section class="hero" id="top">
+    <div class="hero__inner container">
+      <div class="hero__text">
+        <div class="hero__badge reveal-fast">
+          <span class="badge__dot"></span>
+          Смотрят прямо сейчас: <b id="viewerCount">247</b> человек
+        </div>
+        <h1 class="hero__title reveal-fast">
+          Нейросети уже забирают<br><em>твои заказы.</em><br>Или ты забираешь их?
+        </h1>
+        <p class="hero__sub reveal-fast">
+          За 7 дней — от нуля до первого оплаченного видео или карточки товара.<br>
+          <b>800–2 500 ₽</b> за проект. Без кода, без опыта, без вложений.
+        </p>
+        <div class="hero__cta-group reveal-fast">
+          <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--primary" target="_blank" rel="noopener">
+            🎁 Попробовать 2 дня бесплатно
+          </a>
+          <p class="hero__cta-note">Карта не нужна · Отмена в 1 клик · <b>0 ₽</b> сейчас</p>
+        </div>
+        <div class="hero__stats reveal-fast">
+          <div class="stat"><b class="count-up jm" data-target="2347">0</b><span>студентов</span></div>
+          <div class="stat"><b class="count-up jm" data-target="97">0</b><span>% делают видео на 7‑й день</span></div>
+          <div class="stat"><b class="count-up jm" data-target="4">0</b><span>месяца на рынке</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       2. PAIN
+  ══════════════════════════════════ -->
+  <section class="pain section" id="pain">
+    <div class="container">
+      <h2 class="section__title reveal">Узнаёшь себя?</h2>
+      <div class="pain__grid">
+        <div class="pain__card reveal">
+          <div class="pain__icon">😤</div>
+          <p>Видишь, как другие зарабатывают на нейросетях, а сам не знаешь, с чего начать</p>
+        </div>
+        <div class="pain__card reveal">
+          <div class="pain__icon">💸</div>
+          <p>Платишь дизайнерам и видеографам — за то, что мог бы делать сам за вечер</p>
+        </div>
+        <div class="pain__card reveal">
+          <div class="pain__icon">😰</div>
+          <p>Пробовал туториалы на YouTube — через 20 минут запутался и бросил</p>
+        </div>
+        <div class="pain__card reveal">
+          <div class="pain__icon">⏳</div>
+          <p>Через год эти навыки будут у всех. Кто освоит сейчас — снимет сливки первым</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       3. STEPS / HOW IT WORKS
+  ══════════════════════════════════ -->
+  <section class="steps section" id="how">
+    <div class="container">
+      <h2 class="section__title reveal">Как это работает</h2>
+      <p class="section__sub reveal">Без сложных инструментов. Только практика и результат каждый день.</p>
+      <div class="steps__grid">
+        <div class="step__card reveal">
+          <div class="step__num">01</div>
+          <div class="step__title">Регистрируешься в боте</div>
+          <p class="step__text">30 секунд — и ты уже внутри. Без анкет, звонков и «мы вам перезвоним».</p>
+        </div>
+        <div class="step__card reveal">
+          <div class="step__num">02</div>
+          <div class="step__title">Получаешь урок каждый день</div>
+          <p class="step__text">30–40 минут в день. Практика сразу: смотришь — повторяешь — получаешь результат.</p>
+        </div>
+        <div class="step__card reveal">
+          <div class="step__num">03</div>
+          <div class="step__title">Делаешь реальный проект</div>
+          <p class="step__text">К 3-му дню — карточка товара. К 5-му — AI-видео. Работы для портфолио.</p>
+        </div>
+        <div class="step__card reveal">
+          <div class="step__num">04</div>
+          <div class="step__title">Берёшь первые заказы</div>
+          <p class="step__text">На 7-й день — план, где искать клиентов, сколько брать и как продавать.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       4. SHIFT / TRANSFORMATION
+  ══════════════════════════════════ -->
+  <section class="shift section" id="shift">
+    <div class="container">
+      <div class="shift__inner">
+        <h2 class="section__title reveal">А что если за 7 дней —</h2>
+        <div class="shift__list">
+          <div class="shift__item reveal"><span class="shift__check">✓</span><p>На 3-й день у тебя готовая карточка товара — услуга за <b>800–1 200 ₽</b></p></div>
+          <div class="shift__item reveal"><span class="shift__check">✓</span><p>На 5-й день — AI-видео, которое стоит <b>1 500–2 500 ₽</b> на маркетплейсах услуг</p></div>
+          <div class="shift__item reveal"><span class="shift__check">✓</span><p>На 7-й день — портфолио, план первых заказов и понимание, где их брать</p></div>
+          <div class="shift__item reveal"><span class="shift__check">✓</span><p>Больше не платишь дизайнерам. Весь контент для бизнеса — сам, за вечер</p></div>
+        </div>
+        <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--primary reveal" target="_blank" rel="noopener">
+          Начать бесплатно →
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       5. PROGRAM — 7 дней
+  ══════════════════════════════════ -->
+  <section class="program section" id="program">
+    <div class="container">
+      <h2 class="section__title reveal">Программа: 7 дней практики</h2>
+      <p class="section__sub reveal">Каждый день — конкретный инструмент, конкретный результат.</p>
+      <div class="program__days">
+        <div class="day__card reveal">
+          <div class="day__label">День 1</div>
+          <div class="day__title">Старт и базовые инструменты</div>
+          <p class="day__desc">ChatGPT, промпты с нуля. Первые тексты и идеи для контента. Понимаешь, как думают нейросети.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 2</div>
+          <div class="day__title">Генерация изображений</div>
+          <p class="day__desc">Midjourney и аналоги. Создаёшь профессиональные изображения для карточек и постов.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 3</div>
+          <div class="day__title">Первая карточка товара</div>
+          <p class="day__desc">Собираешь готовую карточку для маркетплейса. Это уже услуга стоимостью 800–1 200 ₽.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 4</div>
+          <div class="day__title">AI-видео: основы</div>
+          <p class="day__desc">Kling, Veo, Runway — создаёшь движение из статики. Магия, которую можно продать.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 5</div>
+          <div class="day__title">Продающее видео</div>
+          <p class="day__desc">Монтаж + озвучка через Suno. Готовый ролик для бизнеса за один вечер. 1 500–2 500 ₽.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 6</div>
+          <div class="day__title">Портфолио и упаковка</div>
+          <p class="day__desc">Оформляешь работы, составляешь профиль фрилансера. Готов к первым заказам.</p>
+        </div>
+        <div class="day__card reveal">
+          <div class="day__label">День 7</div>
+          <div class="day__title">Первые заказы</div>
+          <p class="day__desc">Где искать клиентов, как называть цену, как получать повторные заказы. Старт карьеры.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       6. AUTHOR
+  ══════════════════════════════════ -->
+  <section class="author section" id="author">
+    <div class="container">
+      <div class="author__inner">
+        <div class="author__photo reveal">
+          🧑‍💻
+        </div>
+        <div class="reveal">
+          <div class="author__name">Trueman</div>
+          <div class="author__role">Основатель TRUE AI ACADEMY · AI-практик</div>
+          <p class="author__bio">
+            Практикующий специалист по AI-контенту. За последние два года изучил более 50 нейросетей,
+            отобрал те, что реально работают, и упаковал знания в практический 7-дневный курс.
+            Сам зарабатываю на AI-контенте — и учу делать так же.
+          </p>
+          <div class="author__facts">
+            <div class="author__fact">
+              <span>🎯</span>
+              <span>Более 2 000 студентов прошли курс</span>
+            </div>
+            <div class="author__fact">
+              <span>🤖</span>
+              <span>50+ нейросетей протестировано — в курсе только лучшие</span>
+            </div>
+            <div class="author__fact">
+              <span>📱</span>
+              <span>Обучение через Telegram — без сайтов, без регистраций</span>
+            </div>
+            <div class="author__fact">
+              <span>💬</span>
+              <span>Поддержка 24/7 — отвечаю на каждый вопрос</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       7. REVIEWS
+  ══════════════════════════════════ -->
+  <section class="results section" id="results">
+    <div class="container">
+      <h2 class="section__title reveal">Что говорят студенты</h2>
+      <p class="section__sub reveal">Реальные люди, реальные результаты — не актёры</p>
+      <div class="reviews__grid">
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Через неделю взяла первый заказ — карточки для маркетплейса. Делала вечером, пока ребёнок спал. Заплатили 3 600 ₽ за три карточки — это за один вечер»</blockquote>
+          <figcaption>
+            <div class="review__avatar">АК</div>
+            <div><b>Анна К.</b><small>мама в декрете · Казань</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Перестал платить дизайнеру за посты. Теперь весь контент для магазина делаю сам за вечер — экономлю 15 000 ₽ в месяц. Окупился за первую неделю»</blockquote>
+          <figcaption>
+            <div class="review__avatar">СМ</div>
+            <div><b>Сергей М.</b><small>владелец интернет-магазина · Москва</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Думал, что гуманитарий и мне не дано. На третий день были готовые изображения, на седьмой — видео. Показал другу-программисту, он удивился»</blockquote>
+          <figcaption>
+            <div class="review__avatar">ДЕ</div>
+            <div><b>Дмитрий Е.</b><small>менеджер · Екатеринбург</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Нашла работу на удалёнке через месяц после курса. Оформляю карточки для трёх магазинов — стабильные 25 000 ₽ в месяц. Сижу дома, выбираю клиентов сама»</blockquote>
+          <figcaption>
+            <div class="review__avatar">ОВ</div>
+            <div><b>Ольга В.</b><small>фрилансер · Санкт-Петербург</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Взял курс скептически — думал, очередная разводка. Но на 4-й день сделал видео для своего бизнеса. Сэкономил 8 000 ₽ на видеографе. Теперь рекомендую всем»</blockquote>
+          <figcaption>
+            <div class="review__avatar">АТ</div>
+            <div><b>Алексей Т.</b><small>предприниматель · Краснодар</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+        <figure class="review reveal">
+          <div class="review__stars">★★★★★</div>
+          <blockquote>«Сделала первый заказ прямо во время обучения — ещё не дошла до 7-го дня. Клиента нашла через чат студентов курса. 2 500 ₽ за одно видео, час работы»</blockquote>
+          <figcaption>
+            <div class="review__avatar">ТС</div>
+            <div><b>Татьяна С.</b><small>студентка · Новосибирск</small></div>
+          </figcaption>
+          <div class="review__verified">✓ Проверено</div>
+        </figure>
+
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       8. GUARANTEE
+  ══════════════════════════════════ -->
+  <section class="guarantee section" id="guarantee">
+    <div class="container">
+      <div class="guarantee__card reveal">
+        <div class="guarantee__icon">🛡</div>
+        <h2 class="guarantee__title">Никакого риска</h2>
+        <p class="guarantee__text">
+          Первые 2 дня — абсолютно бесплатно. Карта не нужна.<br>
+          Если не понравится — просто не продолжаешь. Никаких звонков, никаких вопросов.<br>
+          <b>Отписка в один клик прямо в Telegram.</b>
+        </p>
+        <div class="guarantee__badges">
+          <span class="guarantee__badge">✓ 0 ₽ сейчас</span>
+          <span class="guarantee__badge">✓ Без карты</span>
+          <span class="guarantee__badge">✓ Отмена в 1 клик</span>
+          <span class="guarantee__badge">✓ Поддержка 24/7</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       9. OFFER + REFERRAL
+  ══════════════════════════════════ -->
+  <section class="offer section" id="offer">
+    <div class="container">
+      <div class="offer__card">
+        <div class="offer__anchor reveal">
+          В платных школах такой курс стоит <s>от 30 000 ₽</s>
+        </div>
+        <h2 class="offer__title reveal">
+          Первые <em>2 дня — бесплатно.</em><br>Потом решаешь сам.
+        </h2>
+
+        <ul class="offer__list">
+          <li class="reveal"><i>✓</i><span><b>7 дней практики</b> — уроки 30–40 минут, результат каждый день</span></li>
+          <li class="reveal"><i>✓</i><span><b>10+ нейросетей</b> — ChatGPT, Midjourney, Kling, Veo, Runway, Suno и другие</span></li>
+          <li class="reveal"><i>✓</i><span><b>Готовые формулы промптов</b> — копируете, подставляете, получаете результат</span></li>
+          <li class="reveal"><i>✓</i><span><b>Поддержка 24/7</b> — живой чат, отвечают на любой вопрос</span></li>
+          <li class="reveal"><i>✓</i><span><b>Портфолио к концу недели</b> — карточки и видео для заказчиков</span></li>
+          <li class="reveal"><i>✓</i><span><b>План первых заказов</b> — где искать клиентов и сколько брать</span></li>
+        </ul>
+
+        <div class="offer__price-block reveal">
+          <div class="offer__price-main">
+            <span class="offer__price-free">0 ₽</span>
+            <span class="offer__price-period">первые 2 дня</span>
+          </div>
+          <p class="offer__price-note">Затем — 1 990 ₽/мес. Карта не нужна. Отмена в 1 клик.</p>
+        </div>
+
+        <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--primary btn--large reveal" target="_blank" rel="noopener">
+          🎁 Начать бесплатно сейчас
+        </a>
+
+        <div class="offer__referral reveal">
+          <div class="offer__referral-inner">
+            <span class="offer__referral-icon">👥</span>
+            <div>
+              <b>Пригласи друга — получи 100+ дней бесплатно</b>
+              <p>Поделись реферальной ссылкой с другом — оба получите бонусные дни доступа</p>
+              <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--ghost btn--sm" target="_blank" rel="noopener">Получить ссылку в боте →</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       10. AUDIENCE
+  ══════════════════════════════════ -->
+  <section class="audience section" id="audience">
+    <div class="container">
+      <h2 class="section__title reveal">Кому подойдёт</h2>
+      <p class="section__sub reveal">Никакого опыта не нужно — только желание попробовать</p>
+      <div class="audience__grid">
+        <div class="audience__card reveal">
+          <div class="audience__icon">👩‍💼</div>
+          <div class="audience__title">Фрилансеры</div>
+          <p class="audience__desc">Хочешь добавить AI в портфолио и брать больше клиентов без найма помощников</p>
+        </div>
+        <div class="audience__card reveal">
+          <div class="audience__icon">🏪</div>
+          <div class="audience__title">Предприниматели</div>
+          <p class="audience__desc">Устал платить агентствам за контент — хочешь делать сам, быстро и дёшево</p>
+        </div>
+        <div class="audience__card reveal">
+          <div class="audience__icon">👩‍🍼</div>
+          <div class="audience__title">Мамы в декрете</div>
+          <p class="audience__desc">Ищешь удалённую работу, которую можно делать вечером, пока дети спят</p>
+        </div>
+        <div class="audience__card reveal">
+          <div class="audience__icon">🎓</div>
+          <div class="audience__title">Студенты</div>
+          <p class="audience__desc">Хочешь навык, который уже сейчас приносит деньги — не после диплома, а сейчас</p>
+        </div>
+        <div class="audience__card reveal">
+          <div class="audience__icon">💼</div>
+          <div class="audience__title">Офисные работники</div>
+          <p class="audience__desc">Строишь подработку или запасной путь — AI-контент не зависит от работодателя</p>
+        </div>
+        <div class="audience__card reveal">
+          <div class="audience__icon">🎨</div>
+          <div class="audience__title">Творческие люди</div>
+          <p class="audience__desc">Хочешь превратить творчество в доход — AI усиливает, а не заменяет твои идеи</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       11. FAQ
+  ══════════════════════════════════ -->
+  <section class="faq section" id="faq">
+    <div class="container">
+      <h2 class="section__title reveal">Частые вопросы</h2>
+      <div class="faq__list">
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Нужен ли опыт работы с нейросетями?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Нет. Курс построен так, чтобы с первого дня было понятно даже тем, кто ни разу не открывал ChatGPT.
+              Каждый урок — пошаговая инструкция с примерами. Если что-то непонятно — пишите в поддержку, ответим быстро.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Сколько времени в день нужно уделять?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              30–40 минут в день. Уроки приходят в Telegram в удобное время. Можно проходить утром,
+              в обеденный перерыв или вечером — как удобно. Никаких вебинаров в фиксированное время.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Нужно ли платить за нейросети отдельно?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Большинство инструментов в курсе имеют бесплатные планы, которых достаточно для обучения.
+              Платные подписки нужны только для профессиональной работы — и тогда они окупаются с первых заказов.
+              В курсе показываем, как работать максимально на бесплатных тарифах.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Как отменить подписку после пробного периода?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Один клик прямо в Telegram. Никаких звонков, форм, писем в поддержку.
+              Просто нажмите «Отписаться» в боте — и всё. Деньги не спишутся.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Реально ли заработать 800–2 500 ₽ за проект?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Да — это реальные ставки на Kwork, Fl.ru и других биржах за карточки товаров и AI-видео.
+              Наши студенты берут именно такие заказы. Часть из них уже зарабатывает 15 000–25 000 ₽ в месяц
+              на удалёнке после завершения курса.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Что значит «100+ дней бесплатно» по реферальной программе?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Когда вы приглашаете друга по своей реферальной ссылке, оба получаете бонусные дни доступа.
+              Это не баллы — реальные дни бесплатного использования курса. Ссылку можно получить прямо в боте.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq__item reveal">
+          <button class="faq__question" aria-expanded="false">
+            Подойдёт ли, если я не технический человек?
+            <span class="faq__arrow">+</span>
+          </button>
+          <div class="faq__answer">
+            <div class="faq__answer-inner">
+              Специально для вас. Курс создан для людей без технического бэкграунда:
+              учителей, домохозяек, менеджеров, творческих людей. Один из наших самых успешных студентов
+              — бывший учитель литературы, который теперь зарабатывает на AI-контенте больше, чем на ставке.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ══════════════════════════════════
+       12. FINAL CTA + COUNTDOWN
+  ══════════════════════════════════ -->
+  <section class="final-cta" id="final" data-final-section>
+    <div class="container">
+      <h2 class="final-cta__title reveal">
+        Начни сегодня.<br><em>Бесплатно.</em>
+      </h2>
+      <p class="final-cta__sub reveal">
+        Пока ты думаешь — кто-то уже берёт заказы.<br>
+        Первые 2 дня ничего не стоят. Карта не нужна.
+      </p>
+
+      <!-- Countdown timer -->
+      <div class="countdown reveal" id="countdownTimer">
+        <div class="countdown__unit">
+          <span class="countdown__num" data-countdown="hours">00</span>
+          <span class="countdown__label">часов</span>
+        </div>
+        <div class="countdown__unit">
+          <span class="countdown__num" data-countdown="minutes">00</span>
+          <span class="countdown__label">минут</span>
+        </div>
+        <div class="countdown__unit">
+          <span class="countdown__num" data-countdown="seconds">00</span>
+          <span class="countdown__label">секунд</span>
+        </div>
+      </div>
+      <p class="spots-note reveal">до окончания акции «2 дня бесплатно»</p>
+
+      <!-- Scarcity bar -->
+      <div class="spots-bar reveal">
+        <div class="spots-bar__fill"></div>
+      </div>
+      <p class="spots-note reveal">Занято <b id="spotsLeft">73</b>% мест на этой неделе</p>
+
+      <a href="https://t.me/Trueman_ai_bot?start=land" class="btn btn--primary btn--large reveal" target="_blank" rel="noopener">
+        🎁 Начать бесплатно — 0 ₽
+      </a>
+      <p class="hero__cta-note reveal" style="margin-top: 16px;">Карта не нужна · Отмена в 1 клик · Поддержка 24/7</p>
+    </div>
+  </section>
+
+  <!-- ─── SCRIPTS ─── -->
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <!-- GSAP -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+  <!-- Lenis smooth scroll -->
+  <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
+  <!-- Main script -->
+  <script src="script_improved.js"></script>
+
+</body>
+</html>
