@@ -264,13 +264,10 @@ OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_EXTRA = {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"}
 
-# Бесплатные текстовые модели (пробуем по очереди), затем дешёвый платный резерв.
-# Слаги :free на OpenRouter часто меняются/исчезают (404) — оставляем только рабочие,
-# мёртвые не держим, чтобы не тратить ~секунды на перебор пустых эндпоинтов.
-AI_FREE_MODELS = [
-    "meta-llama/llama-3.3-70b-instruct:free",
-]
-AI_PAID_RESERVE = "openai/gpt-4o-mini"  # дешёвый резерв при исчерпании free-лимитов
+# Бесплатные текстовые модели отключены: :free слишком часто отдают 429/404 и только
+# добавляют задержку. Текст идём сразу на дешёвый gpt-4o-mini (доли цента за вызов).
+AI_FREE_MODELS = []
+AI_PAID_RESERVE = "openai/gpt-4o-mini"  # основной (и единственный) текстовый путь
 
 
 async def _openrouter_call(model: str, system: str, user: str, max_tokens: int) -> str:
