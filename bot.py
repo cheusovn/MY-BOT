@@ -7,6 +7,7 @@ import string
 import time
 import base64
 import aiohttp
+from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import (
@@ -617,6 +618,58 @@ def wheel_discount_active(uid: str) -> int:
     return u.get("wheel_discount", 0)
 
 
+# ─── МАГАЗИН ЗА XP: тратим опыт на генерации и скидки на курс ───────────────────────────────────────
+# id: (название, цена в XP, тип, значение). type: "gen" даёт N генераций, "disc" — скидку в ₽.
+SHOP_ITEMS = [
+    ("gen3",   "🎨 3 AI-генерации фото",   120, "gen", 3),
+    ("gen5",   "🎨 5 AI-генераций фото",   180, "gen", 5),
+    ("gen10",  "🎨 10 AI-генераций фото",  300, "gen", 10),
+    ("disc500",  "💸 Скидка 500 ₽ на курс",  150, "disc", 500),
+    ("disc1000", "💸 Скидка 1 000 ₽ на курс", 280, "disc", 1000),
+    ("disc2000", "💸 Скидка 2 000 ₽ на курс", 500, "disc", 2000),
+]
+SHOP_BY_ID = {i[0]: i for i in SHOP_ITEMS}
+
+
+def spend_xp(uid: str, cost: int) -> bool:
+    """Списывает XP, если хватает. True — успешно."""
+    u = _ensure_game(uid)
+    if u.get("xp", 0) < cost:
+        return False
+    u["xp"] = u.get("xp", 0) - cost
+    save_users()
+    return True
+
+
+def gen_credits(uid: str) -> int:
+    return _ensure_game(uid).get("gen_credits", 0)
+
+
+def add_gen_credits(uid: str, n: int):
+    u = _ensure_game(uid)
+    u["gen_credits"] = u.get("gen_credits", 0) + n
+    save_users()
+
+
+def use_gen_credit(uid: str) -> bool:
+    u = _ensure_game(uid)
+    if u.get("gen_credits", 0) <= 0:
+        return False
+    u["gen_credits"] -= 1
+    save_users()
+    return True
+
+
+def shop_discount(uid: str) -> int:
+    """Постоянная скидка ₽, купленная за XP в магазине."""
+    return _ensure_game(uid).get("shop_discount", 0)
+
+
+def total_discount(uid: str) -> int:
+    """Суммарная скидка ₽: прогресс + колесо + магазин."""
+    return active_discount(uid) + wheel_discount_active(uid) + shop_discount(uid)
+
+
 # ─── МЕХАНИКА №1: челлендж дня (тема ротируется по дате — без затрат на AI) ─────────────────────────
 CHALLENGE_THEMES = [
     "Промпт для рекламного фото товара (например, кроссовки на ярком фоне)",
@@ -677,17 +730,23 @@ def profile_text(uid: str, name: str) -> str:
     else:
         disc_block = ""
 
+    credits = gen_credits(uid)
+    credits_line = f"🎨 Доступно генераций: <b>{credits}</b>\n" if credits else ""
+    shop_disc = shop_discount(uid)
+    shop_line = f"🛒 Скидка из магазина: <b>{shop_disc} ₽</b>\n" if shop_disc else ""
+
     return (
         f"🎮 <b>Профиль: {name}</b>\n\n"
         f"Уровень: <b>{lvl}</b>\n"
         f"Опыт: <b>{xp} XP</b>\n"
         f"{bar}\n"
         f"{nxt_line}\n\n"
-        f"🔥 Серия дней подряд: <b>{u.get('streak', 0)}</b>\n\n"
+        f"🔥 Серия дней подряд: <b>{u.get('streak', 0)}</b>\n"
+        f"{credits_line}{shop_line}\n"
         f"{disc_block}"
         f"🏅 <b>Достижения ({len(badges)}/{len(BADGES)}):</b>\n{badges_str}\n\n"
-        "💡 Каждый день: челлендж + урок = XP, бейджи и рост скидки. "
-        "Топ-3 недели получают бонусы."
+        "💡 Меняй XP в 🛒 магазине на генерации и скидки. "
+        "Каждый день: челлендж + урок = XP. Топ-3 недели получают бонусы."
     )
 
 
@@ -744,6 +803,11 @@ class WowState(StatesGroup):
     waiting_wish = State()
 
 
+class GenState(StatesGroup):
+    waiting_photo = State()
+    waiting_wish = State()
+
+
 # ─── КЛАВИАТУРЫ ─────────────────────────────────────────────────────────────────────────────────
 
 def goal_kb():
@@ -768,7 +832,8 @@ def start_kb():
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
-        [InlineKeyboardButton(text="💸 Заработать 30% с друзей", callback_data="referral")],
+        [InlineKeyboardButton(text="🛒 Магазин за XP — генерации и скидки", callback_data="shop")],
+        [InlineKeyboardButton(text="💸 Пригласить друга — 30% на карту", callback_data="referral")],
     ])
 
 
@@ -894,12 +959,21 @@ async def cmd_start(message: Message, state: FSMContext):
     if is_new:
         users[user_id] = {"name": name, "stage": "start", "start_at": now_ts()}
         save_users()
+        uname = f"@{message.from_user.username}" if message.from_user.username else "нет username"
+        # Ссылки для открытия профиля: по username (если есть) и по ID (tg://user)
+        open_link = (
+            f"https://t.me/{message.from_user.username}" if message.from_user.username
+            else f"tg://user?id={user_id}"
+        )
         try:
             await bot.send_message(
                 ADMIN_ID,
-                f"🔔 Новый пользователь: <b>{name}</b>\n"
+                f"🔔 <b>Новый пользователь!</b>\n\n"
+                f"👤 {name} ({uname})\n"
                 f"🆔 ID: <code>{user_id}</code>\n"
-                f"👥 Всего: {len(users)}"
+                f"👥 Всего в боте: {len(users)}\n\n"
+                f"➡️ <a href=\"{open_link}\">Открыть профиль</a>",
+                disable_web_page_preview=True,
             )
         except Exception:
             pass
@@ -913,6 +987,11 @@ async def cmd_start(message: Message, state: FSMContext):
         payload = "".join(c for c in raw if c.isalnum() or c in "_-")[:32]
     track("start_" + (payload or "direct"), user_id)
     touch_streak(user_id)
+    if user_id in users:
+        users[user_id]["seen_at"] = now_ts()
+        # Сброс флага реактивации — чтобы при новой паузе снова смогли напомнить
+        users[user_id].pop("fu_reengage", None)
+        save_users()
 
     text = (
         f"👋 <b>{name}, я твой AI-гид в True AI Academy.</b>\n\n"
@@ -1085,11 +1164,11 @@ async def cb_special_tariffs(call: CallbackQuery):
 
     deadline = (datetime.now() + timedelta(hours=24)).strftime("%H:%M %d.%m")
 
-    # Механика №6+№7: суммарная личная скидка (прогресс + колесо)
+    # Суммарная личная скидка (прогресс + колесо + магазин XP)
     refresh_discount(user_id)
-    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
-    base_vip, final_vip, _ = price_with_discount(user_id, "vip")
-    final_vip = max(990, final_vip - wheel_discount_active(user_id))
+    total_disc = total_discount(user_id)
+    base_vip = TARIFFS["vip"]["now"]
+    final_vip = max(990, base_vip - total_disc)
     if total_disc > 0:
         disc_block = (
             f"🎯 <b>ТВОЯ ЛИЧНАЯ СКИДКА: −{total_disc} ₽</b>\n"
@@ -1275,7 +1354,7 @@ async def cb_buy(call: CallbackQuery):
     track(f"buy_{plan_key}", user_id)
 
     refresh_discount(user_id)
-    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
+    total_disc = total_discount(user_id)
     final = max(990, t["now"] - total_disc)
     if total_disc > 0:
         price_line = (
@@ -1325,7 +1404,7 @@ async def cb_card(call: CallbackQuery):
     name = call.from_user.first_name or "Юзер"
     uname = f"@{call.from_user.username}" if call.from_user.username else "нет username"
     goal = GOAL_LABELS.get(users.get(user_id, {}).get("goal", ""), "—")
-    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
+    total_disc = total_discount(user_id)
     final = max(990, t["now"] - total_disc)
     disc_note = f" (личная скидка −{total_disc} ₽)" if total_disc else ""
     wheel_prize = _ensure_game(user_id).get("wheel", "")
@@ -1531,23 +1610,32 @@ async def cb_referral(call: CallbackQuery):
         except Exception:
             pass
 
+    # Ссылка-приглашение с привязкой к промокоду (для атрибуции через ?start=ref<code>)
+    invite_link = f"https://t.me/{BOT_USERNAME}?start=ref{code}"
+    share_text = (
+        "Привет! Учусь в True AI Academy — нейросети и заработок. "
+        f"Первые 2 дня бесплатно. Промокод при оплате: {code} — скидка 500₽"
+    )
+    share_url = f"https://t.me/share/url?url={quote(invite_link)}&text={quote(share_text)}"
+
     text = (
         "💸 <b>ПАРТНЁРСКАЯ ПРОГРАММА</b>\n\n"
         "🎁 Ты получаешь <b>30% на карту</b> с каждой оплаты\n"
         "🎁 Друг получает <b>скидку 500 ₽</b>\n\n"
-        f"🎫 <b>Твой промокод:</b> <code>{code}</code>\n\n"
+        f"🎫 <b>Твой промокод:</b> <code>{code}</code>\n"
+        f"🔗 <b>Твоя ссылка:</b> {invite_link}\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "<b>Реальный расчёт:</b>\n"
         "▸ 1 друг взял VIP → 1 491 ₽ тебе\n"
         "▸ 3 друга VIP → 4 473 ₽ — окупился твой курс\n"
         "▸ 10 друзей → 14 910 ₽ на карте\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "<b>Готовый текст — просто перешли:</b>\n\n"
-        f"<i>Привет! Учусь в True AI Academy — нейросети и заработок.\n"
-        f"Первые 2 дня бесплатно: @{BOT_USERNAME}\n"
-        f"Промокод при оплате: {code} — скидка 500₽</i>"
+        "👇 Нажми «Переслать другу» и выбери, кому отправить:"
     )
-    await show(call, text, back_kb())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Переслать другу (1 тап)", url=share_url)],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+    await show(call, text, kb)
 
 
 @dp.callback_query(lambda c: c.data == "profile")
@@ -1871,6 +1959,221 @@ async def wow_wish(message: Message, state: FSMContext):
     asyncio.create_task(_send_channel_later(message.from_user.id))
 
 
+# ─── МАГАЗИН ЗА XP ─────────────────────────────────────────────────────────────────────────────────
+
+def shop_kb(uid: str):
+    xp = _ensure_game(uid).get("xp", 0)
+    rows = []
+    for item_id, label, cost, _typ, _val in SHOP_ITEMS:
+        mark = "" if xp >= cost else "🔒 "
+        rows.append([InlineKeyboardButton(
+            text=f"{mark}{label} — {cost} XP", callback_data=f"shop_{item_id}"
+        )])
+    rows.append([InlineKeyboardButton(text="🥊 Заработать XP (челлендж)", callback_data="challenge")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.callback_query(lambda c: c.data == "shop")
+async def cb_shop(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    track("shop_open", user_id)
+    xp = _ensure_game(user_id).get("xp", 0)
+    credits = gen_credits(user_id)
+    text = (
+        "🛒 <b>МАГАЗИН ЗА XP</b>\n\n"
+        f"У тебя: <b>{xp} XP</b>"
+        + (f" · 🎨 генераций: <b>{credits}</b>" if credits else "") + "\n\n"
+        "Меняй опыт на бесплатные AI-генерации фото\n"
+        "и реальные скидки на курс. 👇\n\n"
+        "💡 XP копится за челлендж дня, уроки, серии и приглашения друзей."
+    )
+    await show(call, text, shop_kb(user_id))
+
+
+@dp.callback_query(lambda c: c.data.startswith("shop_"))
+async def cb_shop_buy(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    item_id = call.data.replace("shop_", "")
+    item = SHOP_BY_ID.get(item_id)
+    if not item:
+        await call.answer("Товар не найден", show_alert=True)
+        return
+    _id, label, cost, typ, val = item
+
+    if not spend_xp(user_id, cost):
+        xp = _ensure_game(user_id).get("xp", 0)
+        await call.answer(f"Не хватает XP: нужно {cost}, у тебя {xp}", show_alert=True)
+        return
+
+    track("shop_buy", user_id, item_id)
+    if typ == "gen":
+        add_gen_credits(user_id, val)
+        result = (
+            f"✅ <b>Куплено: {label}</b>\n\n"
+            f"🎨 Тебе начислено <b>{val}</b> генераций.\n"
+            f"Всего доступно: <b>{gen_credits(user_id)}</b>.\n\n"
+            "Жми «Сгенерировать фото» и присылай кадр 👇"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎨 Сгенерировать фото", callback_data="gen")],
+            [InlineKeyboardButton(text="🛒 В магазин", callback_data="shop")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ])
+    else:  # disc
+        u = _ensure_game(user_id)
+        u["shop_discount"] = u.get("shop_discount", 0) + val
+        save_users()
+        result = (
+            f"✅ <b>Куплено: {label}</b>\n\n"
+            f"💸 Скидка <b>{val} ₽</b> закреплена за тобой и применится к тарифу.\n"
+            f"Суммарная скидка из магазина: <b>{shop_discount(user_id)} ₽</b>.\n\n"
+            "Она суммируется со скидкой за прогресс при оплате."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 К тарифам", callback_data="tariffs")],
+            [InlineKeyboardButton(text="🛒 В магазин", callback_data="shop")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ])
+    await show(call, result, kb)
+
+
+# ─── ГЕНЕРАЦИЯ ПО КРЕДИТАМ (купленные/бонусные генерации) ───────────────────────────────────────────
+
+def gen_cancel_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✖️ Отмена", callback_data="gen_cancel")],
+    ])
+
+
+@dp.callback_query(lambda c: c.data == "gen")
+async def cb_gen(call: CallbackQuery, state: FSMContext):
+    user_id = str(call.from_user.id)
+    if gen_credits(user_id) <= 0:
+        await show(
+            call,
+            "🎨 <b>У тебя пока нет генераций.</b>\n\n"
+            "Купи их за XP в магазине — 3, 5 или 10 штук 👇",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛒 Открыть магазин", callback_data="shop")],
+                [InlineKeyboardButton(text="🥊 Заработать XP", callback_data="challenge")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+        return
+    await state.set_state(GenState.waiting_photo)
+    await show(
+        call,
+        f"🎨 <b>AI-ГЕНЕРАЦИЯ ФОТО</b>\n\n"
+        f"Доступно генераций: <b>{gen_credits(user_id)}</b>\n\n"
+        "📸 Пришли фото — и опиши, что с ним сделать.\n\n"
+        "👇 Жду фото:",
+        gen_cancel_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data == "gen_cancel")
+async def cb_gen_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show(call, "Окей, отложили. Генерации ждут тебя 🎨", start_kb())
+
+
+@dp.message(GenState.waiting_photo)
+async def gen_photo(message: Message, state: FSMContext):
+    text = (message.caption or message.text or "").strip()
+    if not message.photo and text.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
+        return
+    if not message.photo:
+        await message.answer("Пришли именно <b>фото</b> 🙌", reply_markup=gen_cancel_kb())
+        return
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > 5 * 1024 * 1024:
+        await message.answer("Фото великовато 😅 До 5 МБ, пожалуйста.", reply_markup=gen_cancel_kb())
+        return
+    await state.update_data(photo_id=photo.file_id)
+    await state.set_state(GenState.waiting_wish)
+    await message.answer(
+        "🔥 Фото получил! Что с ним сделать?\n\n"
+        "Например: <i>«сделай меня супергероем»</i>, "
+        "<i>«Pixar-стиль»</i>, <i>«деловой портрет»</i>, "
+        "<i>«неоновый фон ночного города»</i>\n\n"
+        "👇 Опиши:",
+        reply_markup=gen_cancel_kb(),
+    )
+
+
+@dp.message(GenState.waiting_wish)
+async def gen_wish(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    wish = (message.text or message.caption or "").strip()
+    if wish.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
+        return
+    if not wish:
+        await message.answer("Опиши словами, что сделать с фото 🙌", reply_markup=gen_cancel_kb())
+        return
+    data = await state.get_data()
+    photo_id = data.get("photo_id")
+    await state.clear()
+    if not photo_id:
+        await message.answer("Что-то потерялось 🙈 Начни заново 🎨", reply_markup=start_kb())
+        return
+    if gen_credits(user_id) <= 0:
+        await message.answer("Генерации закончились. Купи ещё в магазине 🛒", reply_markup=start_kb())
+        return
+
+    wish = wish[:300]
+    thinking = await message.answer("🎨 Генерирую… ~30–60 секунд.")
+
+    image_b64 = None
+    try:
+        file = await bot.get_file(photo_id)
+        bio = await bot.download_file(file.file_path)
+        image_b64 = base64.b64encode(bio.read()).decode("utf-8")
+    except Exception as e:
+        logging.error(f"gen download error: {e}")
+
+    img_bytes = None
+    if image_b64 and rate_ok(user_id, "gen_run", 10):
+        prompt = await ai_text(WOW_PROMPT_SYSTEM, wish, max_tokens=200) or wish
+        img_bytes = await ai_generate_image(prompt, image_b64)
+
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+
+    if not img_bytes:
+        await message.answer(
+            "😔 Не получилось сгенерировать — сервис перегружен.\n"
+            "Генерация <b>не списана</b>, попробуй ещё раз чуть позже 🎨",
+            reply_markup=start_kb(),
+        )
+        track("gen_fail", user_id)
+        return
+
+    use_gen_credit(user_id)
+    track("gen_done", user_id)
+    left = gen_credits(user_id)
+    await message.answer_photo(
+        photo=BufferedInputFile(img_bytes, filename="ai_gen.png"),
+        caption=(
+            "🎨 <b>Готово!</b>\n\n"
+            f"Осталось генераций: <b>{left}</b>"
+            + ("" if left else " — пополни в 🛒 магазине за XP") + "\n\n"
+            "Хочешь ещё? Жми «Сгенерировать снова» 👇"
+        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎨 Сгенерировать снова", callback_data="gen")],
+            [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ]),
+    )
+
+
 # ─── МЕХАНИКА №1: ЧЕЛЛЕНДЖ ДНЯ (промпт-дуэль, оценивает AI) ─────────────────────────────────────────
 
 def challenge_cancel_kb():
@@ -2054,10 +2357,7 @@ async def cmd_help(message: Message):
     await message.answer(text, reply_markup=to_manager_kb())
 
 
-@dp.message(Command("stats"))
-async def cmd_stats(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
+def build_stats_text() -> str:
     stages = {}
     for data in users.values():
         s = data.get("stage", "start")
@@ -2075,14 +2375,16 @@ async def cmd_stats(message: Message):
     c = events_log.get("counters", {})
     funnel = (
         f"  🌐 с сайта (land): {c.get('start_land', 0)}\n"
+        f"  🤯 чудо открыли: {c.get('wow_open', 0)} / готово: {c.get('wow_done', 0)}\n"
         f"  ▶️ день 1: {c.get('day1', 0)}\n"
         f"  ▶️ день 2: {c.get('day2', 0)}\n"
+        f"  🛒 магазин: {c.get('shop_open', 0)} / покупок: {c.get('shop_buy', 0)}\n"
         f"  💰 тарифы: {c.get('special_tariffs', 0)}\n"
         f"  💳 счёт ЮKassa: {c.get('yookassa_invoice', 0)}\n"
         f"  💳 заявка картой: {c.get('card_request', 0)}\n"
         f"  ✅ оплачено: {c.get('pay_success', 0)}"
     )
-    await message.answer(
+    return (
         f"📊 <b>Статистика</b>\n\n"
         f"👥 Пользователей: <b>{total}</b>\n"
         f"💰 Заявок: <b>{purchased}</b> ({conv:.1f}%)\n"
@@ -2093,6 +2395,56 @@ async def cmd_stats(message: Message):
         f"<b>По стадиям:</b>\n{stage_lines}\n\n"
         f"<b>По целям:</b>\n{goal_lines}"
     )
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer(build_stats_text())
+
+
+def admin_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer(
+        f"🛠 <b>Админ-панель</b>\n\n"
+        f"👥 Пользователей: <b>{len(users)}</b>\n\n"
+        "Выбери действие 👇",
+        reply_markup=admin_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data == "adm_broadcast")
+async def cb_adm_broadcast(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(BroadcastState.waiting)
+    await call.message.answer(
+        f"📢 <b>Массовая рассылка на {len(users)} чел.</b>\n\n"
+        "Пришли сообщение (текст с HTML, можно с фото) — оно уйдёт всем.\n"
+        "Отмена: /cancel"
+    )
+
+
+@dp.callback_query(lambda c: c.data == "adm_stats")
+async def cb_adm_stats(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(build_stats_text())
 
 
 @dp.message(Command("broadcast"))
@@ -2148,6 +2500,18 @@ async def cmd_promo_check(message: Message):
 
 # ─── FOLLOW-UP ЦЕПОЧКА (4 триггера) ──────────────────────────────────────────────────────
 
+async def _fu_send(uid, text, kb, flag):
+    """Отправляет напоминание и ставит флаг, чтобы не повторять. True — отправлено."""
+    try:
+        await bot.send_message(int(uid), text, reply_markup=kb, disable_web_page_preview=True)
+        users[uid][flag] = True
+        save_users()
+        await asyncio.sleep(0.05)  # бережно к лимитам Telegram
+        return True
+    except Exception:
+        return False
+
+
 async def follow_up_scheduler():
     while True:
         await asyncio.sleep(1800)
@@ -2155,72 +2519,90 @@ async def follow_up_scheduler():
 
         for uid, data in list(users.items()):
             stage = data.get("stage", "start")
+            seen = data.get("seen_at", data.get("start_at", ts))
             try:
-                # FU1: зашёл, не начал day1 — через 2ч
-                if (stage == "start"
-                        and not data.get("fu_start")
-                        and ts - data.get("start_at", ts) > 2 * 3600):
-                    await bot.send_message(
-                        int(uid),
-                        "👋 <b>Кстати — 2 дня курса ты всё ещё не взял.</b>\n\n"
-                        "Без оплаты. Без карты.\n"
-                        "40 минут — и ты поймёшь, как на этом зарабатывать.\n\n"
-                        f"{social_proof()}\n\n"
-                        "👇 Начать:",
-                        reply_markup=day1_kb()
-                    )
-                    users[uid]["fu_start"] = True
-                    save_users()
-
-                # FU2: day1, не пошёл в day2 — через 4ч
-                elif (stage == "day1"
-                        and not data.get("fu_day1")
-                        and ts - data.get("day1_at", ts) > 4 * 3600):
-                    await bot.send_message(
-                        int(uid),
-                        "🔥 <b>Как 1-й день?</b>\n\n"
-                        "На 2-м дне ты увидишь — где именно\n"
-                        "лежат деньги в AI-фрилансе.\n\n"
-                        "Плюс <b>открою закрытое предложение + 3 бонуса</b>\n"
-                        "только для тех, кто дошёл до конца.\n\n"
-                        "👇 Продолжай:",
-                        reply_markup=day2_kb()
-                    )
-                    users[uid]["fu_day1"] = True
-                    save_users()
-
-                # FU3: tariffs, не купил — через 20ч
-                elif (stage == "tariffs"
-                        and not data.get("fu_tariffs")
-                        and ts - data.get("tariffs_at", ts) > 20 * 3600):
-                    s = get_spots()
-                    await bot.send_message(
-                        int(uid),
-                        f"⚠️ <b>Осталось {s} мест и ~4 часа</b>\n\n"
-                        "Потом цены вернутся к обычным (9 900 ₽ VIP).\n"
-                        "Бонусы на 6 470 ₽ — пропадут.\n\n"
-                        "Доступ к курсу — навсегда, без подписок.\n\n"
-                        f"{social_proof()}\n\n"
-                        "👇 Выбрать:",
-                        reply_markup=tariffs_kb(s)
-                    )
-                    users[uid]["fu_tariffs"] = True
-                    save_users()
-
-                               # FU4: просил напомнить через 24ч
+                # Приоритет 1 — просил напомнить (его собственный запрос, не назойливо)
                 if (data.get("remind_at") and ts > data["remind_at"]
                         and not data.get("remind_sent")):
-                    await bot.send_message(
-                        int(uid),
-                        "⏰ <b>Напоминаю — это последний шанс.</b>\n\n"
-                        "Акция закрывается. На следующий поток\n"
-                        "цены поднимутся. Бонусы уже не будет.\n\n"
-                        "Если планировал — сейчас лучший момент.\n\n"
-                        "👇",
-                        reply_markup=downsell_kb()
-                    )
-                    users[uid]["remind_sent"] = True
-                    save_users()
+                    await _fu_send(uid,
+                        "⏰ <b>Как и просил — напоминаю.</b>\n\n"
+                        "Акционная цена и бонусы держатся не вечно.\n"
+                        "Если планировал — сейчас удачный момент. 👇",
+                        downsell_kb(), "remind_sent")
+                    continue
+
+                # FU1: зашёл, не начал day1 — через 2ч
+                if (stage == "start" and not data.get("fu_start")
+                        and ts - data.get("start_at", ts) > 2 * 3600):
+                    await _fu_send(uid,
+                        "👋 <b>Загляни — 2 дня курса всё ещё ждут тебя.</b>\n\n"
+                        "Без оплаты и карты. 40 минут — и увидишь,\n"
+                        "как на нейросетях реально зарабатывают.\n\n"
+                        "👇 Начать:",
+                        day1_kb(), "fu_start")
+                    continue
+
+                # FU_WOW: так и не попробовал «оживить фото» — через 6ч, мягко
+                if (not data.get("wow_used") and not data.get("fu_wow")
+                        and ts - data.get("start_at", ts) > 6 * 3600):
+                    await _fu_send(uid,
+                        "🤯 <b>Ты ещё не пробовал главное.</b>\n\n"
+                        "Кинь фото — нейросеть превратит его в шедевр\n"
+                        "за минуту. Это бесплатно и правда впечатляет 👇",
+                        InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🤯 Оживить фото (бесплатно)", callback_data="wow")],
+                            [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
+                        ]), "fu_wow")
+                    continue
+
+                # FU2: day1, не пошёл в day2 — через 4ч
+                if (stage == "day1" and not data.get("fu_day1")
+                        and ts - data.get("day1_at", ts) > 4 * 3600):
+                    await _fu_send(uid,
+                        "🔥 <b>Как первый день?</b>\n\n"
+                        "На 2-м дне — где именно лежат деньги в AI,\n"
+                        "плюс закрытое предложение для дошедших.\n\n"
+                        "👇 Продолжить:",
+                        day2_kb(), "fu_day1")
+                    continue
+
+                # FU3: tariffs, не купил — через 20ч
+                if (stage == "tariffs" and not data.get("fu_tariffs")
+                        and ts - data.get("tariffs_at", ts) > 20 * 3600):
+                    s = get_spots()
+                    await _fu_send(uid,
+                        f"⚠️ <b>Твоё закрытое предложение скоро закроется.</b>\n\n"
+                        f"Осталось мест по акции: {s}.\n"
+                        "Доступ к курсу — навсегда, без подписок.\n\n"
+                        "👇 Посмотреть тарифы:",
+                        tariffs_kb(s), "fu_tariffs")
+                    continue
+
+                # FU_REENGAGE: не заходил 3 дня — зовём ценностью (челлендж + XP), один раз
+                if (not data.get("fu_reengage")
+                        and ts - seen > 3 * 24 * 3600):
+                    await _fu_send(uid,
+                        "🥊 <b>Тебя ждёт новый челлендж дня!</b>\n\n"
+                        f"Тема: {challenge_theme()}\n"
+                        "Пройди за минуту — получишь +30 XP, а на XP\n"
+                        "в магазине берутся бесплатные генерации и скидки 👇",
+                        InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🥊 Челлендж дня", callback_data="challenge")],
+                            [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
+                            [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
+                        ]), "fu_reengage")
+                    continue
+
+                # FU_DISCOUNT: личная скидка вот-вот сгорит — напоминаем (loss aversion, но полезно)
+                until = data.get("discount_until", 0)
+                if (active_discount(uid) > 0 and not data.get("fu_disc")
+                        and 0 < until - ts < 3 * 3600):
+                    await _fu_send(uid,
+                        f"💸 <b>Твоя скидка {active_discount(uid)} ₽ скоро сгорит!</b>\n\n"
+                        "Ты заработал её прогрессом — обидно терять.\n"
+                        "Успей применить на тарифе 👇",
+                        tariffs_kb(get_spots()), "fu_disc")
+                    continue
 
             except Exception:
                 pass
