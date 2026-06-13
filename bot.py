@@ -691,6 +691,13 @@ def total_discount(uid: str) -> int:
     return active_discount(uid) + wheel_discount_active(uid) + shop_discount(uid)
 
 
+def final_price(uid: str, plan_key: str) -> int:
+    """Финальная цена тарифа ₽ с учётом личной скидки (минимум 990 ₽)."""
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    refresh_discount(uid)
+    return max(990, t["now"] - total_discount(uid))
+
+
 # ─── МЕХАНИКА №1: челлендж дня (тема ротируется по дате — без затрат на AI) ─────────────────────────
 CHALLENGE_THEMES = [
     "Промпт для рекламного фото товара (например, кроссовки на ярком фоне)",
@@ -1384,25 +1391,24 @@ async def cb_buy(call: CallbackQuery):
     set_stage(user_id, "checkout")
     track(f"buy_{plan_key}", user_id)
 
-    refresh_discount(user_id)
     total_disc = total_discount(user_id)
-    final = max(990, t["now"] - total_disc)
-    if total_disc > 0:
+    final = final_price(user_id, plan_key)
+    if total_disc > 0 and final < t["now"]:
         price_line = (
             f"<s>{t['old']:,} ₽</s> → <s>{t['now']:,} ₽</s> → <b>{final:,} ₽</b>\n"
-            f"🎯 С учётом твоей личной скидки <b>−{total_disc} ₽</b>\n"
+            f"🎯 Личная скидка <b>−{t['now'] - final} ₽</b> уже применяется при оплате\n"
         ).replace(",", " ")
-        disc_hint = "💡 Скидка за прогресс уже учтена — назови её менеджеру.\n"
+        disc_hint = "💡 Скидка спишется автоматически — платишь итоговую сумму.\n"
     else:
         price_line = f"<s>{t['old']:,} ₽</s> → <b>{t['now']:,} ₽</b>\n".replace(",", " ")
-        disc_hint = "💡 Есть промокод друга? Скидку 500 ₽ применит менеджер.\n"
+        disc_hint = "💡 Есть промокод друга на 500 ₽? Его применит менеджер.\n"
 
     text = (
         f"✅ <b>Отличный выбор — {t['label']}!</b>\n\n"
         f"{price_line}"
         f"{t['perks']}\n\n"
         "━━━━━━━━━━━━━━━━\n"
-        "💳 <b>Оплата картой РФ</b> — быстро и безопасно через ЮKassa,\n"
+        "💳 <b>Оплата</b> — СБП, T-Pay, SberPay или картой через ЮKassa,\n"
         "доступ открывается сразу после оплаты.\n\n"
         "🛡 Без риска: сначала 2 дня бесплатно, потом решаешь.\n"
         f"{disc_hint}\n"
@@ -1766,8 +1772,11 @@ async def on_pay_email(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     track("yookassa_invoice", user_id, plan_key)
 
+    # Тест-тариф — фиксированные 100 ₽; реальные тарифы — с учётом личной скидки.
+    amount = t["now"] if plan_key == "test" else final_price(user_id, plan_key)
+
     pid, url = await yk_create_payment(
-        t["now"], f"{t['label']} — TRUE AI ACADEMY", email, plan_key, user_id
+        amount, f"{t['label']} — TRUE AI ACADEMY", email, plan_key, user_id
     )
     if not url:
         await message.answer(
@@ -1777,13 +1786,16 @@ async def on_pay_email(message: Message, state: FSMContext):
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💳 Оплатить {t['now']} ₽", url=url)],
+        [InlineKeyboardButton(text=f"💳 Оплатить {amount} ₽", url=url)],
         [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"ykchk_{pid}:{plan_key}")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
     note = "🧪 <b>Тестовый режим.</b>\n" if YOOKASSA_API_TEST else ""
+    saved = ""
+    if plan_key != "test" and amount < t["now"]:
+        saved = f"🎯 Личная скидка применена: <b>−{t['now'] - amount} ₽</b>\n"
     await message.answer(
-        f"{note}💳 <b>Платёж на {t['now']} ₽ создан.</b>\n\n"
+        f"{note}{saved}💳 <b>Платёж на {amount} ₽ создан.</b>\n\n"
         "Нажми «Оплатить» → выбери <b>СБП, T-Pay, SberPay или карту</b> и подтверди.\n"
         "После оплаты вернись в бот — доступ откроется автоматически (или нажми «Я оплатил»).",
         reply_markup=kb,
