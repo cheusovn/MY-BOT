@@ -6,6 +6,7 @@ import random
 import string
 import time
 import base64
+import uuid
 import aiohttp
 from urllib.parse import quote
 from datetime import datetime, timedelta
@@ -205,6 +206,16 @@ YOOKASSA_TEST = ":TEST:" in YOOKASSA_TOKEN
 # Система налогообложения для чека: 1=ОСН, 2=УСН доходы, 3=УСН доходы-расходы,
 # 4=ЕНВД, 5=ЕСХН, 6=Патент. По умолчанию — УСН доходы.
 YOOKASSA_TAX_SYSTEM = int(os.environ.get("YOOKASSA_TAX_SYSTEM", "2"))
+
+# ─── ЮKassa API (прямая интеграция: СБП, T-Pay, SberPay, карты) ────────────────────────────────────
+# Для приёма СБП / T-Pay / SberPay используется прямой API ЮKassa (Basic Auth: shopId:secret_key).
+# YOOKASSA_SECRET_KEY — секретный ключ из кабинета ЮKassa (live_... боевой, test_... тестовый).
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "1382534")
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "")
+YOOKASSA_API_ENABLED = bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)
+YOOKASSA_API_TEST = YOOKASSA_SECRET_KEY.startswith("test_")
+# Куда вернуть покупателя после оплаты (https). По умолчанию — обратно в бот.
+YOOKASSA_RETURN_URL = os.environ.get("YOOKASSA_RETURN_URL", f"https://t.me/{BOT_USERNAME}")
 
 # ─── АНАЛИТИКА: лог воронки ───────────────────────────────────────────────────────────────────────
 EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
@@ -818,6 +829,10 @@ class GenState(StatesGroup):
     waiting_wish = State()
 
 
+class PayState(StatesGroup):
+    waiting_email = State()  # ввод email для чека перед оплатой через API ЮKassa
+
+
 # ─── КЛАВИАТУРЫ ─────────────────────────────────────────────────────────────────────────────────
 
 def goal_kb():
@@ -892,10 +907,15 @@ def tariffs_kb(spots: int = None):
 
 
 def pay_choice_kb(plan_key: str):
-    """Оплата картой РФ через ЮKassa; если токен не задан — через менеджера."""
+    """Оплата через ЮKassa: API (СБП/T-Pay/SberPay/карта) → Telegram-карта → менеджер."""
     t = TARIFFS.get(plan_key, TARIFFS["vip"])
     rows = []
-    if YOOKASSA_TOKEN:
+    if YOOKASSA_API_ENABLED:
+        label = f"💳 Оплатить {t['now']:,} ₽ — СБП · T-Pay · SberPay · карта".replace(",", " ")
+        if YOOKASSA_API_TEST:
+            label += "  (ТЕСТ)"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"ykapi_{plan_key}")])
+    elif YOOKASSA_TOKEN:
         label = f"💳 Оплатить картой — {t['now']:,} ₽".replace(",", " ")
         if YOOKASSA_TEST:
             label += "  (ТЕСТ)"
@@ -903,8 +923,9 @@ def pay_choice_kb(plan_key: str):
     else:
         rows.append([InlineKeyboardButton(text="💳 Картой РФ через менеджера",
                                           callback_data=f"card_{plan_key}")])
-    rows.append([InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
-                                      callback_data=f"bump_{plan_key}")])
+    if plan_key != "test":
+        rows.append([InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
+                                          callback_data=f"bump_{plan_key}")])
     rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1574,6 +1595,218 @@ async def on_paid(message: Message):
         )
     except Exception:
         pass
+
+
+# ─── ЮKassa API: оплата через СБП / T-Pay / SberPay / карту ───────────────────────────────────────
+
+def _yk_auth_header() -> str:
+    raw = f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode()
+    return "Basic " + base64.b64encode(raw).decode()
+
+
+def _valid_email(s: str) -> bool:
+    s = (s or "").strip()
+    if " " in s or s.count("@") != 1:
+        return False
+    local, _, domain = s.partition("@")
+    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
+
+
+async def yk_create_payment(amount_rub: int, description: str, email: str, plan_key: str, user_id: str):
+    """Создаёт платёж в ЮKassa через API. Возвращает (payment_id, confirmation_url) или (None, None)."""
+    value = f"{amount_rub}.00"
+    payload = {
+        "amount": {"value": value, "currency": "RUB"},
+        "capture": True,
+        "confirmation": {"type": "redirect", "return_url": YOOKASSA_RETURN_URL},
+        "description": description[:128],
+        "metadata": {"user_id": user_id, "plan": plan_key},
+        "receipt": {
+            "customer": {"email": email},
+            "tax_system_code": YOOKASSA_TAX_SYSTEM,
+            "items": [{
+                "description": description[:128],
+                "quantity": "1.00",
+                "amount": {"value": value, "currency": "RUB"},
+                "vat_code": 1,                  # 1 = без НДС (УСН)
+                "payment_mode": "full_payment",
+                "payment_subject": "service",
+            }],
+        },
+    }
+    headers = {
+        "Authorization": _yk_auth_header(),
+        "Idempotence-Key": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.post("https://api.yookassa.ru/v3/payments", json=payload, headers=headers) as r:
+                data = await r.json()
+                if r.status not in (200, 201):
+                    logging.error(f"YK create payment failed {r.status}: {data}")
+                    return None, None
+                return data.get("id"), (data.get("confirmation") or {}).get("confirmation_url")
+    except Exception as e:
+        logging.error(f"YK create payment error: {e}")
+        return None, None
+
+
+async def yk_get_payment(payment_id: str):
+    headers = {"Authorization": _yk_auth_header()}
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get(f"https://api.yookassa.ru/v3/payments/{payment_id}", headers=headers) as r:
+                return await r.json()
+    except Exception as e:
+        logging.error(f"YK get payment error: {e}")
+        return None
+
+
+_granted_payments: set = set()  # защита от двойной выдачи доступа (poller + ручная проверка)
+
+
+async def grant_paid_access(chat_id: int, user_id: str, plan_key: str, amount_str: str, payment_id: str):
+    if payment_id in _granted_payments:
+        return
+    _granted_payments.add(payment_id)
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    set_stage(user_id, "paid")
+    track("pay_success", user_id, plan_key)
+    new_badge = give_badge(user_id, "buyer")
+    add_xp(user_id, "buy")
+
+    if plan_key == "test":
+        await bot.send_message(
+            chat_id,
+            "✅ <b>Оплата прошла — проверка ЮKassa успешна!</b>\n\n"
+            "🎓 Открываю доступ к <b>1-му дню курса</b> 👇",
+        )
+        await bot.send_message(
+            chat_id,
+            "🎓 <b>ДЕНЬ 1 курса</b>\n\nДоступ открыт. Запускай первый день прямо сейчас 👇",
+            reply_markup=day1_kb(),
+        )
+    else:
+        toast = badge_toast("buyer") if new_badge else ""
+        await bot.send_message(
+            chat_id,
+            f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
+            "Доступ ко всем 7 дням курса и бонусам открыт.\n"
+            f"Менеджер {MANAGER} свяжется с тобой в течение 15 минут "
+            "и добавит в закрытый чат с куратором.\n\n"
+            "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
+            + toast,
+            reply_markup=back_kb(),
+        )
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"✅✅✅ <b>ОПЛАТА (ЮKassa API{' ТЕСТ' if YOOKASSA_API_TEST else ''})!</b>\n\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"📦 Тариф: {t['label']}\n"
+            f"💳 {amount_str} ₽ (СБП/T-Pay/SberPay/карта)\n"
+            f"🧾 payment: <code>{payment_id}</code>\n"
+            + ("🧪 Тестовый платёж — деньги не списаны.\n" if YOOKASSA_API_TEST else "→ Добавь в закрытый чат с куратором.")
+        )
+    except Exception:
+        pass
+
+
+async def poll_payment(chat_id: int, user_id: str, payment_id: str, plan_key: str):
+    # Опрашиваем статус ~10 минут (120 × 5 c). Без вебхука.
+    for _ in range(120):
+        await asyncio.sleep(5)
+        data = await yk_get_payment(payment_id)
+        if not data:
+            continue
+        status = data.get("status")
+        if status == "succeeded":
+            amount = (data.get("amount") or {}).get("value", "0")
+            await grant_paid_access(chat_id, user_id, plan_key, amount, payment_id)
+            return
+        if status == "canceled":
+            try:
+                await bot.send_message(chat_id, "❌ Платёж отменён. Попробуй ещё раз через /tariffs.")
+            except Exception:
+                pass
+            return
+
+
+@dp.callback_query(lambda c: c.data.startswith("ykapi_"))
+async def cb_ykapi(call: CallbackQuery, state: FSMContext):
+    plan_key = call.data.replace("ykapi_", "")
+    await call.answer()
+    if not YOOKASSA_API_ENABLED:
+        await call.message.answer(
+            "💳 Оплата пока настраивается. Напиши менеджеру — оформим вручную:",
+            reply_markup=to_manager_kb(),
+        )
+        return
+    await state.update_data(pay_plan=plan_key)
+    await state.set_state(PayState.waiting_email)
+    await call.message.answer(
+        "✉️ <b>Введите ваш email</b> — на него ЮKassa пришлёт чек об оплате.\n\n"
+        "<i>Например:</i> <code>name@mail.ru</code>"
+    )
+
+
+@dp.message(PayState.waiting_email)
+async def on_pay_email(message: Message, state: FSMContext):
+    email = (message.text or "").strip()
+    if not _valid_email(email):
+        await message.answer("❌ Это не похоже на email. Введите адрес вида <code>name@mail.ru</code>:")
+        return
+    data = await state.get_data()
+    plan_key = data.get("pay_plan", "test")
+    await state.clear()
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    user_id = str(message.from_user.id)
+    track("yookassa_invoice", user_id, plan_key)
+
+    pid, url = await yk_create_payment(
+        t["now"], f"{t['label']} — TRUE AI ACADEMY", email, plan_key, user_id
+    )
+    if not url:
+        await message.answer(
+            "⚠️ Не удалось создать платёж. Попробуй ещё раз через /tariffs или напиши менеджеру:",
+            reply_markup=to_manager_kb(),
+        )
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {t['now']} ₽", url=url)],
+        [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"ykchk_{pid}:{plan_key}")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+    note = "🧪 <b>Тестовый режим.</b>\n" if YOOKASSA_API_TEST else ""
+    await message.answer(
+        f"{note}💳 <b>Платёж на {t['now']} ₽ создан.</b>\n\n"
+        "Нажми «Оплатить» → выбери <b>СБП, T-Pay, SberPay или карту</b> и подтверди.\n"
+        "После оплаты вернись в бот — доступ откроется автоматически (или нажми «Я оплатил»).",
+        reply_markup=kb,
+    )
+    asyncio.create_task(poll_payment(message.chat.id, user_id, pid, plan_key))
+
+
+@dp.callback_query(lambda c: c.data.startswith("ykchk_"))
+async def cb_ykcheck(call: CallbackQuery):
+    await call.answer("Проверяю оплату…")
+    rest = call.data.replace("ykchk_", "")
+    pid, _, plan_key = rest.partition(":")
+    data = await yk_get_payment(pid)
+    status = (data or {}).get("status")
+    if status == "succeeded":
+        amount = (data.get("amount") or {}).get("value", "0")
+        await grant_paid_access(call.message.chat.id, str(call.from_user.id), plan_key or "test", amount, pid)
+    elif status == "canceled":
+        await call.message.answer("❌ Платёж отменён. Попробуй ещё раз через /tariffs.")
+    else:
+        await call.message.answer(
+            "⏳ Оплата ещё не поступила. Если ты только что оплатил — подожди 1–2 минуты и нажми «Я оплатил» снова."
+        )
 
 
 @dp.callback_query(lambda c: c.data.startswith("bump_"))
@@ -2399,14 +2632,22 @@ async def cmd_paytest(message: Message):
     # Только для админа: проверка боевой оплаты ЮKassa на 100 ₽.
     if message.from_user.id != ADMIN_ID:
         return
-    if not YOOKASSA_TOKEN:
-        await message.answer("⚠️ YOOKASSA_PROVIDER_TOKEN не задан — оплата картой недоступна.")
+    if not (YOOKASSA_API_ENABLED or YOOKASSA_TOKEN):
+        await message.answer(
+            "⚠️ Оплата не настроена. Задай YOOKASSA_SECRET_KEY (для СБП/T-Pay/SberPay) "
+            "или YOOKASSA_PROVIDER_TOKEN (карта) в переменных Amvera."
+        )
         return
-    mode = "ТЕСТОВЫЙ (деньги не спишутся)" if YOOKASSA_TEST else "БОЕВОЙ (спишутся реальные 100 ₽)"
+    if YOOKASSA_API_ENABLED:
+        mode = "ТЕСТОВЫЙ (деньги не спишутся)" if YOOKASSA_API_TEST else "БОЕВОЙ (спишутся реальные 100 ₽)"
+        methods = "СБП, T-Pay, SberPay или картой"
+    else:
+        mode = "ТЕСТОВЫЙ (деньги не спишутся)" if YOOKASSA_TEST else "БОЕВОЙ (спишутся реальные 100 ₽)"
+        methods = "картой"
     await message.answer(
         f"🧪 <b>Проверка оплаты ЮKassa — 100 ₽</b>\n\n"
         f"Режим: <b>{mode}</b>\n"
-        "Нажми «Оплатить картой», проведи платёж — бот выдаст доступ к 1-му дню.\n"
+        f"Нажми «Оплатить», заплати {methods} — бот выдаст доступ к 1-му дню.\n"
         "После проверки оформи возврат в кабинете ЮKassa → Возвраты.",
         reply_markup=pay_choice_kb("test"),
     )
