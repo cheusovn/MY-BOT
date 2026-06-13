@@ -790,8 +790,8 @@ async def cmd_start(message: Message, state: FSMContext):
         "Выбери цель — подберу твой маршрут:"
     )
 
-    # Приветственное фото показываем на каждом /start (а не только новым).
-    if os.path.exists(WELCOME_IMG):
+    # Приветственное фото — только новым пользователям.
+    if is_new and os.path.exists(WELCOME_IMG):
         try:
             await message.answer_photo(
                 photo=FSInputFile(WELCOME_IMG),
@@ -801,7 +801,7 @@ async def cmd_start(message: Message, state: FSMContext):
             return
         except Exception as e:
             logging.warning(f"welcome photo failed: {e}")
-    else:
+    elif is_new:
         logging.warning(f"welcome photo not found at {WELCOME_IMG}")
     await message.answer(text, reply_markup=goal_kb())
 
