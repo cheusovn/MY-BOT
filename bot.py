@@ -2727,24 +2727,143 @@ async def cmd_stats(message: Message):
     await message.answer(build_stats_text())
 
 
+def build_referral_text() -> str:
+    c = events_log.get("counters", {})
+    rows = []
+    for code, owner in promos.items():
+        invited = c.get(f"start_ref{code}", 0)
+        owner_name = users.get(owner, {}).get("name", "—")
+        rows.append((invited, code, owner_name))
+    rows.sort(reverse=True)
+    total_invited = sum(r[0] for r in rows)
+    top = rows[:15]
+    lines = "\n".join(
+        f"  🎫 <code>{code}</code> — {name}: <b>{inv}</b>" for inv, code, name in top
+    ) or "  пока нет промокодов"
+    return (
+        f"💸 <b>Рефералы</b>\n\n"
+        f"🎫 Амбассадоров (промокодов): <b>{len(promos)}</b>\n"
+        f"👥 Переходов по реф-ссылкам: <b>{total_invited}</b>\n"
+        f"💸 XP за рефералов выдано: <b>{c.get('referral', 0)}</b> раз\n\n"
+        f"<b>Топ амбассадоров (код — имя: приглашений):</b>\n{lines}"
+    )
+
+
+def build_payments_text() -> str:
+    c = events_log.get("counters", {})
+    invoices = c.get("yookassa_invoice", 0)
+    paid = c.get("pay_success", 0)
+    card_req = c.get("card_request", 0)
+    paid_users = sum(1 for d in users.values() if d.get("stage") == "paid")
+    conv = (paid / invoices * 100) if invoices else 0
+    return (
+        f"💰 <b>Платежи</b>\n\n"
+        f"💳 Счетов создано: <b>{invoices}</b>\n"
+        f"✅ Успешных оплат: <b>{paid}</b>\n"
+        f"📈 Конверсия счёт→оплата: <b>{conv:.1f}%</b>\n"
+        f"👤 Пользователей со статусом «оплачено»: <b>{paid_users}</b>\n"
+        f"📝 Заявок картой через менеджера: <b>{card_req}</b>"
+    )
+
+
+def build_recent_users_text(n: int = 15) -> str:
+    items = sorted(users.items(), key=lambda kv: kv[1].get("start_at", 0), reverse=True)[:n]
+    lines = []
+    for uid, d in items:
+        lines.append(f"  {d.get('name', '—')} (<code>{uid}</code>) — {d.get('stage', 'start')}")
+    return f"👥 <b>Последние {len(items)} пользователей</b>\n\n" + ("\n".join(lines) or "  нет")
+
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="adm_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats")],
+        [InlineKeyboardButton(text="💸 Рефералы", callback_data="adm_refs")],
+        [InlineKeyboardButton(text="💰 Платежи", callback_data="adm_pays")],
+        [InlineKeyboardButton(text="👥 Последние пользователи", callback_data="adm_users")],
+        [InlineKeyboardButton(text="📥 Экспорт данных", callback_data="adm_export")],
+        [InlineKeyboardButton(text="🧪 Тест оплаты 100 ₽", callback_data="ykapi_test")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
+
+
+def admin_back_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="adm_home")],
+    ])
+
+
+def admin_panel_text() -> str:
+    return (
+        f"🛠 <b>Админ-панель</b>\n\n"
+        f"👥 Пользователей: <b>{len(users)}</b>\n"
+        f"✅ Оплат: <b>{events_log.get('counters', {}).get('pay_success', 0)}</b>\n"
+        f"🎫 Промокодов: <b>{len(promos)}</b>\n"
+        f"📦 Мест осталось: <b>{get_spots()}</b>\n\n"
+        "Выбери действие 👇"
+    )
 
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await message.answer(
-        f"🛠 <b>Админ-панель</b>\n\n"
-        f"👥 Пользователей: <b>{len(users)}</b>\n\n"
-        "Выбери действие 👇",
-        reply_markup=admin_kb(),
-    )
+    await message.answer(admin_panel_text(), reply_markup=admin_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_home")
+async def cb_adm_home(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(admin_panel_text(), reply_markup=admin_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_refs")
+async def cb_adm_refs(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(build_referral_text(), reply_markup=admin_back_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_pays")
+async def cb_adm_pays(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(build_payments_text(), reply_markup=admin_back_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_users")
+async def cb_adm_users(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(build_recent_users_text(), reply_markup=admin_back_kb())
+
+
+@dp.callback_query(lambda c: c.data == "adm_export")
+async def cb_adm_export(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer("Готовлю файлы…")
+    sent = 0
+    for path, title in [(USERS_FILE, "Пользователи"), (PROMO_FILE, "Промокоды"), (EVENTS_FILE, "События")]:
+        if os.path.exists(path):
+            try:
+                await bot.send_document(ADMIN_ID, FSInputFile(path), caption=f"📥 {title}")
+                sent += 1
+            except Exception as e:
+                logging.error(f"export {path}: {e}")
+    if not sent:
+        await call.message.answer("⚠️ Файлы данных пока не созданы.")
+    await call.message.answer("Готово 👇", reply_markup=admin_back_kb())
 
 
 @dp.callback_query(lambda c: c.data == "adm_broadcast")
