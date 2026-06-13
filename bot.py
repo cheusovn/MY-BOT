@@ -38,8 +38,9 @@ PRICE_PRO = (14900, 7900)
 
 logging.basicConfig(level=logging.INFO)
 
-# Увеличенный таймаут для стабильной работы на Amvera (число секунд!)
-_session = AiohttpSession(timeout=60)
+# Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
+# а не висит минуту, блокируя ответ (число секунд!).
+_session = AiohttpSession(timeout=30)
 bot = Bot(
     token=BOT_TOKEN,
     session=_session,
@@ -61,18 +62,30 @@ def load_json(file, default=None):
 
 
 def save_json(file, data):
-    with open(file, "w", encoding="utf-8") as f:
+    # Атомарная запись: пишем во временный файл и подменяем, чтобы не оставить битый JSON
+    tmp = f"{file}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, file)
 
 
 promos = load_json(PROMO_FILE)
 users = load_json(USERS_FILE)
 spots_data = load_json(SPOTS_FILE, {"spots": 23, "updated": time.time()})
 
+# ─── Отложенная запись на диск (debounce) ──────────────────────────────────────────────────────────
+# Вместо блокирующей записи всего файла при каждом действии — помечаем "грязным",
+# а фоновый flusher раз в пару секунд пишет в отдельном потоке. Event-loop не блокируется.
+_dirty = set()
 
-def save_promos(): save_json(PROMO_FILE, promos)
-def save_users(): save_json(USERS_FILE, users)
-def save_spots(): save_json(SPOTS_FILE, spots_data)
+
+def _mark_dirty(key: str):
+    _dirty.add(key)
+
+
+def save_promos(): _mark_dirty("promos")
+def save_users(): _mark_dirty("users")
+def save_spots(): _mark_dirty("spots")
 
 
 def get_spots() -> int:
@@ -192,7 +205,7 @@ def track(event: str, uid: str = "", extra: str = ""):
         events_log.setdefault("recent", []).append(
             {"e": event, "uid": uid, "x": extra, "t": int(now_ts())})
         events_log["recent"] = events_log["recent"][-500:]
-        save_json(EVENTS_FILE, events_log)
+        _mark_dirty("events")
     except Exception:
         pass
 
@@ -1604,11 +1617,38 @@ async def follow_up_scheduler():
                 pass
 
 
+# ─── Фоновая запись «грязных» файлов (не блокирует event-loop) ────────────────────────────────────
+
+def _flush_targets():
+    return {
+        "users": (USERS_FILE, users),
+        "spots": (SPOTS_FILE, spots_data),
+        "promos": (PROMO_FILE, promos),
+        "events": (EVENTS_FILE, events_log),
+    }
+
+
+async def disk_flusher():
+    targets = _flush_targets()
+    while True:
+        await asyncio.sleep(2)
+        if not _dirty:
+            continue
+        for key in list(_dirty):
+            _dirty.discard(key)
+            path, data = targets[key]
+            try:
+                await asyncio.to_thread(save_json, path, data)
+            except Exception as e:
+                logging.warning(f"flush {key} failed: {e}")
+
+
 # ─── ЗАПУСК с retry при сетевых сбоях ─────────────────────────────────────────────────────────
 
 async def main():
     print("Бот запущен!")
     asyncio.create_task(follow_up_scheduler())
+    asyncio.create_task(disk_flusher())
 
     retry_delay = 5
     while True:
