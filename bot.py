@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
-    LabeledPrice, PreCheckoutQuery,
+    BufferedInputFile, LabeledPrice, PreCheckoutQuery,
 )
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -329,17 +329,54 @@ AI_VISION_MODELS = [
 ]
 AI_VISION_PAID = "openai/gpt-4o-mini"
 
-WOW_SYSTEM = (
-    "Ты — AI-наставник школы True AI Academy. Ученик прислал своё фото (или фото друга/брата) "
-    "для первого знакомства с нейросетями. Посмотри на фото и составь ОДИН готовый промпт для "
-    "нейросети-генератора изображений, который эффектно преобразит этот кадр (например: герой "
-    "комикса, Pixar-стиль, деловой портрет, киноплакат — выбери уместное по фото). "
-    "Ответь на русском СТРОГО так (HTML <b></b> и <code></code>, без markdown ** **):\n\n"
-    "<b>1 короткая фраза-комплимент к фото</b>\n\n"
-    "📋 <b>Твой промпт:</b>\n<code>...промпт на английском...</code>\n\n"
-    "<b>Вставь его вместе с фото в бота по кнопке ниже — получишь результат за 30 секунд.</b>\n\n"
-    "Будь тёплым и кратким. Никаких выдуманных фактов о человеке."
+# Модель ГЕНЕРАЦИИ/редактирования изображений через OpenRouter (nano-banana).
+# Платная (~$0.04/картинка), поэтому в сценарии «первого чуда» — строго 1 раз на аккаунт.
+AI_IMAGE_MODEL = os.environ.get("OPENROUTER_IMAGE_MODEL", "google/gemini-2.5-flash-image-preview")
+
+# Системка для превращения «желания» юзера в качественный промпт для image-модели.
+WOW_PROMPT_SYSTEM = (
+    "Ты — промпт-инженер для нейросети, редактирующей фото. Пользователь прислал фото и написал "
+    "своими словами, что хочет с ним сделать. Преврати это в ОДИН чёткий промпт на английском "
+    "для image-editing модели. Сохрани узнаваемость лица с фото. Верни ТОЛЬКО сам промпт, "
+    "без кавычек и пояснений."
 )
+
+
+async def ai_generate_image(prompt: str, image_b64: str):
+    """Редактирует фото по промпту через OpenRouter (nano-banana). Возвращает bytes PNG или None."""
+    if not OPENROUTER_KEY:
+        return None
+    content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+    ]
+    payload = {
+        "model": AI_IMAGE_MODEL,
+        "messages": [{"role": "user", "content": content}],
+        "modalities": ["image", "text"],
+    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    headers.update(OPENROUTER_EXTRA)
+    timeout = aiohttp.ClientTimeout(total=120)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
+                data = await r.json()
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+                msg = data["choices"][0]["message"]
+                # OpenRouter возвращает картинки в message.images[].image_url.url (data URL)
+                imgs = msg.get("images") or []
+                for im in imgs:
+                    url = (im.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        b64 = url.split(",", 1)[1]
+                        return base64.b64decode(b64)
+                logging.warning(f"image model returned no images: {str(data)[:200]}")
+                return None
+    except Exception as e:
+        logging.error(f"ai_generate_image failed: {e}")
+        return None
 
 
 async def ai_vision(system: str, user_text: str, image_b64: str, max_tokens: int = 350) -> str:
@@ -695,7 +732,8 @@ class ChallengeState(StatesGroup):
 
 
 class WowState(StatesGroup):
-    waiting = State()
+    waiting_photo = State()
+    waiting_wish = State()
 
 
 # ─── КЛАВИАТУРЫ ─────────────────────────────────────────────────────────────────────────────────
@@ -710,7 +748,7 @@ def goal_kb():
 
 def start_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🪄 Первое AI-чудо за 2 минуты", callback_data="wow")],
+        [InlineKeyboardButton(text="🤯 Кинь фото — нейросеть тебя удивит (бесплатно)", callback_data="wow")],
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня доступа", callback_data="day1")],
         [InlineKeyboardButton(text="🔥 ПОДАРОК: 100+ AI бесплатно", callback_data="free_gift")],
         [
@@ -911,9 +949,9 @@ async def cb_goal(call: CallbackQuery):
     text = (
         hook +
         "━━━━━━━━━━━━━━━━\n"
-        "🪄 <b>Лучший первый шаг — сделай AI-чудо за 2 минуты.</b>\n"
-        "Пришли фото — я подберу промпт, и сам увидишь,\n"
-        "что нейросети проще, чем кажется.\n\n"
+        "🤯 <b>Лучший первый шаг — кинь фото, и нейросеть тебя удивит.</b>\n"
+        "Оживлю твой кадр за минуту — бесплатно, 1 раз.\n"
+        "Сам увидишь, что AI проще, чем кажется.\n\n"
         "🎓 А дальше — <b>2 дня полного курса бесплатно</b>\n"
         "или <b>100+ нейросетей в подарок</b>.\n\n"
         "👇 Что выберешь?"
@@ -1617,7 +1655,7 @@ async def cb_wheel_spin(call: CallbackQuery):
     )
 
 
-# ─── ПЕРВОЕ AI-ЧУДО ЗА 2 МИНУТЫ (онбординг-вау: фото → персональный промпт → GIFT-бот → канал) ──────
+# ─── ПЕРВОЕ AI-ЧУДО (фото → желание → генерация картинки → GIFT-бот → канал). 1 раз на аккаунт. ──────
 
 def wow_cancel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1625,19 +1663,39 @@ def wow_cancel_kb():
     ])
 
 
+def wow_used_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 100+ нейросетей — забрать бесплатно", url=GIFT_LINK)],
+        [InlineKeyboardButton(text="🚀 2 дня курса бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
 @dp.callback_query(lambda c: c.data == "wow")
 async def cb_wow(call: CallbackQuery, state: FSMContext):
     user_id = str(call.from_user.id)
     track("wow_open", user_id)
-    await state.set_state(WowState.waiting)
-    task = wow_task()
+
+    # 1 раз на аккаунт — если уже воспользовался, мягко уводим на GIFT-бот
+    if _ensure_game(user_id).get("wow_used"):
+        await show(
+            call,
+            "🪄 <b>Своё AI-чудо ты уже создал!</b>\n\n"
+            "Бесплатная генерация — одна на аккаунт.\n"
+            "Но дальше возможностей в <b>100 раз больше</b> — \n"
+            "тут собрано <b>100+ нейросетей</b> 👇",
+            wow_used_kb(),
+        )
+        return
+
+    await state.set_state(WowState.waiting_photo)
     text = (
-        "🪄 <b>ТВОЁ ПЕРВОЕ AI-ЧУДО ЗА 2 МИНУТЫ</b>\n\n"
-        "Сейчас сам убедишься: нейросети — это <b>проще, чем кажется.</b>\n\n"
-        f"📸 <b>Задание:</b>\n{task['task']}\n\n"
-        "Я <b>посмотрю на твоё фото</b> и подберу персональный промпт —\n"
-        "а потом покажу, где превратить это в готовую картинку.\n\n"
-        "👇 Пришли фото прямо сюда:"
+        "🪄 <b>ОЖИВИ СВОЁ ФОТО НЕЙРОСЕТЬЮ</b>\n\n"
+        "Сейчас сам убедишься: это <b>проще, чем ты думаешь.</b>\n\n"
+        "📸 Пришли фото — своё, друга или брата.\n"
+        "Я превращу его в то, что ты захочешь.\n\n"
+        "🎁 Это бесплатно — <b>1 раз на аккаунт.</b>\n\n"
+        "👇 Жду фото:"
     )
     await show(call, text, wow_cancel_kb())
 
@@ -1657,9 +1715,9 @@ async def _send_channel_later(uid: int, delay: int = 300):
         await bot.send_message(
             uid,
             "📚 <b>Кстати — пока не забыл.</b>\n\n"
-            "У меня на канале <b>куча бесплатных гайдов</b> по нейросетям:\n"
-            "промпты, фишки и разборы, которые экономят часы.\n\n"
-            "Загляни — там есть что забрать бесплатно 👇",
+            "Гайды, готовые промпты и бесплатные фишки\n"
+            "по нейросетям я выкладываю на своём канале.\n\n"
+            "Загляни — там есть что изучить и забрать бесплатно 👇",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📚 Открыть канал с гайдами", url=CHANNEL_LINK)],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
@@ -1670,84 +1728,138 @@ async def _send_channel_later(uid: int, delay: int = 300):
         logging.warning(f"channel nudge failed for {uid}: {e}")
 
 
-def wow_result_kb():
-    """После результата: ведём ТОЛЬКО на GIFT-бот (партнёрка), затем дальше по воронке."""
+def wow_sell_kb():
+    """После результата: продаём — GIFT-бот (партнёрка) + курс."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Сгенерировать прямо сейчас (бесплатно)", url=GIFT_LINK)],
-        [InlineKeyboardButton(text="🚀 А тут возможностей ещё больше — 2 дня бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="🎁 100+ нейросетей — возможностей в 100 раз больше", url=GIFT_LINK)],
+        [InlineKeyboardButton(text="🚀 2 дня курса бесплатно", callback_data="day1")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
 
-@dp.message(WowState.waiting)
-async def process_wow(message: Message, state: FSMContext):
+# Шаг 1: получили фото — спрашиваем, что с ним сделать
+@dp.message(WowState.waiting_photo)
+async def wow_photo(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    has_photo = bool(message.photo)
-    user_text = (message.caption or message.text or "").strip()
-    task = wow_task()
+    text = (message.caption or message.text or "").strip()
 
-    # Команда — выходим из режима
-    if not has_photo and user_text.startswith("/"):
+    if not message.photo and text.startswith("/"):
         await state.clear()
         await message.answer("Окей, отложили чудо. Команда ниже 👇", reply_markup=start_kb())
         return
 
-    if not has_photo and not user_text:
+    if not message.photo:
         await message.answer(
-            "Пришли <b>фото</b> сюда — и я подберу промпт под него 🙌",
+            "Пришли именно <b>фото</b> 🙌 (картинкой, не файлом)",
             reply_markup=wow_cancel_kb(),
         )
         return
 
-    await state.clear()
-    thinking = await message.answer("🪄 Колдую над твоим кадром… пара секунд.")
+    # Анти-абуз: ограничим размер
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > 5 * 1024 * 1024:
+        await message.answer("Фото великовато 😅 Пришли другое (до 5 МБ).", reply_markup=wow_cancel_kb())
+        return
 
-    prompt_block = None
-    if has_photo and rate_ok(user_id, "wow_ai", 30):
-        try:
-            file = await bot.get_file(message.photo[-1].file_id)
-            # Анти-абуз: не качаем гигантские файлы
-            if not file.file_size or file.file_size <= 5 * 1024 * 1024:
-                bio = await bot.download_file(file.file_path)
-                image_b64 = base64.b64encode(bio.read()).decode("utf-8")
-                prompt_block = await ai_vision(
-                    WOW_SYSTEM,
-                    "Вот моё фото для первого AI-чуда. Подбери промпт под этот кадр.",
-                    image_b64,
-                )
-        except Exception as e:
-            logging.error(f"wow photo error: {e}")
+    await state.update_data(photo_id=photo.file_id)
+    await state.set_state(WowState.waiting_wish)
+    await message.answer(
+        "🔥 <b>Фото получил!</b>\n\n"
+        "Теперь напиши: <b>что мне сделать с этой фоткой?</b>\n\n"
+        "Например:\n"
+        "▸ <i>«сделай меня супергероем из комикса»</i>\n"
+        "▸ <i>«преврати в Pixar-персонажа»</i>\n"
+        "▸ <i>«деловой портрет для аватарки»</i>\n"
+        "▸ <i>«добавь фон ночного города в неоне»</i>\n\n"
+        "👇 Опиши своими словами:",
+        reply_markup=wow_cancel_kb(),
+    )
+
+
+# Шаг 2: получили желание — генерируем картинку и продаём
+@dp.message(WowState.waiting_wish)
+async def wow_wish(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    wish = (message.text or message.caption or "").strip()
+
+    if wish.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили чудо. Команда ниже 👇", reply_markup=start_kb())
+        return
+
+    if not wish:
+        await message.answer(
+            "Опиши словами, что сделать с фото 🙌 (например «сделай меня супергероем»)",
+            reply_markup=wow_cancel_kb(),
+        )
+        return
+
+    data = await state.get_data()
+    photo_id = data.get("photo_id")
+    await state.clear()
+
+    if not photo_id:
+        await message.answer("Что-то потерялось 🙈 Начни заново через меню 🪄", reply_markup=start_kb())
+        return
+
+    wish = wish[:300]
+    thinking = await message.answer("🪄 Создаю твою картинку нейросетью… это ~30–60 секунд.")
+
+    # Скачиваем фото
+    image_b64 = None
+    try:
+        file = await bot.get_file(photo_id)
+        bio = await bot.download_file(file.file_path)
+        image_b64 = base64.b64encode(bio.read()).decode("utf-8")
+    except Exception as e:
+        logging.error(f"wow download error: {e}")
+
+    # Желание → промпт → генерация
+    img_bytes = None
+    if image_b64 and rate_ok(user_id, "wow_gen", 30):
+        prompt = await ai_text(WOW_PROMPT_SYSTEM, wish, max_tokens=200) or wish
+        img_bytes = await ai_generate_image(prompt, image_b64)
 
     try:
         await thinking.delete()
     except Exception:
         pass
 
+    if not img_bytes:
+        # Генерация недоступна (нет ключа/кредитов/ошибка) — бесплатный шанс НЕ сжигаем
+        await message.answer(
+            "😔 <b>Не получилось сгенерировать прямо сейчас</b> — сервис перегружен.\n\n"
+            "Но ты не теряешь попытку! А пока — забери <b>100+ нейросетей</b>,\n"
+            "там сделаешь это сам за минуту 👇",
+            reply_markup=wow_sell_kb(),
+        )
+        track("wow_gen_fail", user_id)
+        return
+
+    # Успех — фиксируем расход (1 раз на аккаунт) и выдаём картинку
+    u = _ensure_game(user_id)
+    u["wow_used"] = True
+    save_users()
     add_xp(user_id, "wow")
     refresh_discount(user_id)
     new_badge = give_badge(user_id, "wonder")
     toast = badge_toast("wonder") if new_badge else ""
-
-    if not prompt_block:
-        # Fallback — готовый промпт из пула (ноль расхода / AI недоступен / прислали текст)
-        prompt_block = (
-            "Отличное фото! Держи проверенный промпт под это задание:\n\n"
-            f"📋 <b>Твой промпт:</b>\n<code>{task['prompt']}</code>\n\n"
-            "<b>Вставь его вместе с фото в бота по кнопке ниже — результат за 30 секунд.</b>"
-        )
-
     track("wow_done", user_id)
-    await message.answer(
-        "🪄 <b>ГОТОВО — ВОТ ТВОЁ ПЕРВОЕ AI-ЧУДО</b>\n\n"
-        f"{prompt_block}\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "Видишь? Нейросети — это правда просто. 🔥\n"
-        f"🏅 <b>+20 XP</b> за первое чудо!{toast}",
-        reply_markup=wow_result_kb(),
-        disable_web_page_preview=True,
+
+    await message.answer_photo(
+        photo=BufferedInputFile(img_bytes, filename="ai_magic.png"),
+        caption=(
+            "🪄 <b>ГОТОВО — ВОТ ТВОЁ AI-ЧУДО!</b>\n\n"
+            "Ну как — <b>согласись, это проще, чем ты думал?</b> 🔥\n\n"
+            "А ведь это лишь капля. Тут собрано <b>100+ нейросетей</b> —\n"
+            "и возможностей в <b>100 раз больше</b>: видео, музыка, тексты, дизайн.\n\n"
+            f"🏅 <b>+20 XP</b> за первое чудо!{toast}\n\n"
+            "👇 Забери весь арсенал:"
+        ),
+        reply_markup=wow_sell_kb(),
     )
 
-    # Через 5 минут — мягкий зов на канал с бесплатными гайдами
+    # Через 5 минут — мягкий зов на канал с гайдами
     asyncio.create_task(_send_channel_later(message.from_user.id))
 
 
