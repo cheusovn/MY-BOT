@@ -341,6 +341,7 @@ AI_VISION_PAID = "openai/gpt-4o-mini"
 # ставится первым, если задан.
 _img_env = os.environ.get("OPENROUTER_IMAGE_MODEL", "").strip()
 AI_IMAGE_MODELS = ([_img_env] if _img_env else []) + [
+    "google/gemini-3.1-flash-image-preview",
     "google/gemini-2.5-flash-image",
     "google/gemini-2.5-flash-image-preview",
 ]
