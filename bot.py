@@ -191,6 +191,10 @@ TARIFFS = {
              "perks": "Все 7 дней + личный куратор + чат 24/7 + бонусы на 6 470 ₽"},
     "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "stars": 4690,
              "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM"},
+    # Технический тариф для проверки боевой оплаты ЮKassa. Доступен только админу
+    # через /paytest, в меню тарифов НЕ показывается. После оплаты выдаёт 1-й день.
+    "test": {"label": "🧪 Тест-доступ (1 день)", "old": 100, "now": 100, "stars": 1,
+             "perks": "Проверочный платёж — открывает доступ к 1-му дню курса"},
 }
 
 # ─── ЮKassa (Telegram Payments) ───────────────────────────────────────────────────────────────────
@@ -1520,6 +1524,30 @@ async def on_paid(message: Message):
         method = "ЮKassa (карта)"
     is_test = YOOKASSA_TEST and sp.currency == "RUB"
 
+    # Тест-тариф: подтверждаем оплату и сразу выдаём доступ к 1-му дню.
+    if plan_key == "test":
+        await message.answer(
+            "✅ <b>Оплата 100 ₽ прошла — проверка ЮKassa успешна!</b>\n\n"
+            "🎓 Открываю доступ к <b>1-му дню курса</b> 👇",
+        )
+        await message.answer(
+            "🎓 <b>ДЕНЬ 1 курса</b>\n\n"
+            "Доступ открыт. Запускай первый день прямо сейчас 👇",
+            reply_markup=day1_kb(),
+        )
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"🧪 <b>ТЕСТ-ОПЛАТА 100 ₽ прошла</b>\n"
+                f"🆔 ID: <code>{user_id}</code>\n"
+                f"💳 {sp.total_amount / 100:.0f} {sp.currency}\n"
+                f"🧾 charge: <code>{sp.telegram_payment_charge_id}</code>\n"
+                + ("🧪 Тестовый режим — деньги не списаны.\n" if (YOOKASSA_TEST and sp.currency == 'RUB') else "💰 Боевой платёж — оформи возврат в ЮKassa → Возвраты.")
+            )
+        except Exception:
+            pass
+        return
+
     toast = badge_toast("buyer") if new_badge else ""
     await message.answer(
         f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
@@ -2364,6 +2392,24 @@ async def cmd_tariffs(message: Message):
         "👇 Выбери:"
     )
     await message.answer(text, reply_markup=tariffs_kb(s))
+
+
+@dp.message(Command("paytest"))
+async def cmd_paytest(message: Message):
+    # Только для админа: проверка боевой оплаты ЮKassa на 100 ₽.
+    if message.from_user.id != ADMIN_ID:
+        return
+    if not YOOKASSA_TOKEN:
+        await message.answer("⚠️ YOOKASSA_PROVIDER_TOKEN не задан — оплата картой недоступна.")
+        return
+    mode = "ТЕСТОВЫЙ (деньги не спишутся)" if YOOKASSA_TEST else "БОЕВОЙ (спишутся реальные 100 ₽)"
+    await message.answer(
+        f"🧪 <b>Проверка оплаты ЮKassa — 100 ₽</b>\n\n"
+        f"Режим: <b>{mode}</b>\n"
+        "Нажми «Оплатить картой», проведи платёж — бот выдаст доступ к 1-му дню.\n"
+        "После проверки оформи возврат в кабинете ЮKassa → Возвраты.",
+        reply_markup=pay_choice_kb("test"),
+    )
 
 
 @dp.message(Command("help"))
