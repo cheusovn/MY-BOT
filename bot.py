@@ -27,6 +27,31 @@ ADMIN_ID = 817730727
 BOT_USERNAME = "Trueman_ai_bot"
 TRIAL_DAY_1 = "https://t.me/+5ep9DPf7eNMzZjdi"
 TRIAL_DAY_2 = "https://t.me/+SpoNR-ahkJFiZTJi"
+
+# Уроки курса по дням. Дни 1–2 — бесплатный пробник, дни 3–8 — после оплаты.
+COURSE_LINKS = {
+    1: TRIAL_DAY_1,
+    2: TRIAL_DAY_2,
+    3: "https://t.me/+8TYsQliQrsU3YTIy",
+    4: "https://t.me/+rZx8KDLDMGc0ZTYy",
+    5: "https://t.me/+M77H7C6pvj04Njcy",
+    6: "https://t.me/+QUWfICu78RsyMmMy",
+    7: "https://t.me/+LljT4Jwm6UIxN2Fi",
+    8: "https://t.me/+QBz_MaKNSIY5ZmQy",
+}
+TOTAL_DAYS = 8
+# Следующий день курса открывается после отметки «домашка сделана» и не ранее,
+# чем через это время после открытия предыдущего урока (материал должен улечься).
+HW_COOLDOWN = 4 * 3600
+# Темы дней (можно переименовать под реальное содержание уроков).
+DAY_TITLES = {
+    3: "Продающие картинки и карточки товара",
+    4: "AI-видео: рилсы и короткие ролики",
+    5: "Звук: озвучка, голоса и музыка",
+    6: "Собираем портфолио",
+    7: "Где брать заказы и сколько брать",
+    8: "Бонус: продвижение и поток клиентов",
+}
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 MANAGER = "@nikolay_cheusov"
@@ -189,7 +214,11 @@ TARIFFS = {
     "vip":  {"label": "⭐ VIP с куратором", "old": 9900, "now": 4970, "floor": 3470, "stars": 2900,
              "perks": "Все 7 дней + личный куратор + чат 24/7 + бонусы на 6 470 ₽"},
     "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "floor": 5970, "stars": 4690,
-             "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM"},
+             "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM + 8-й день"},
+    # Бонусный 8-й день (SMM, продвижение, продажи, маркетинг, фриланс).
+    # Входит в PRO; для Базового и VIP — докупается отдельно. Фикс-цена (floor=now).
+    "day8": {"label": "🚀 День 8 — продвижение и продажи", "old": 2990, "now": 1790, "floor": 1790, "stars": 1100,
+             "perks": "Бонусный день: SMM, продвижение, продажи, маркетинг и фриланс"},
     # Технический тариф для проверки боевой оплаты ЮKassa. Доступен только админу
     # через /paytest, в меню тарифов НЕ показывается. После оплаты выдаёт 1-й день.
     "test": {"label": "🧪 Тест-доступ (1 день)", "old": 100, "now": 100, "floor": 100, "stars": 1,
@@ -700,6 +729,111 @@ def final_price(uid: str, plan_key: str) -> int:
     return max(floor, t["now"] - total_discount(uid))
 
 
+# ─── КУРС: последовательная выдача дней (3–8 — после оплаты) ────────────────────────────────────
+# Правила: дни 1–2 — бесплатно. Дни 3–8 — купившим курс. Каждый следующий день
+# открывается после отметки «домашка сделана» и не ранее 4 ч с открытия предыдущего.
+# День 8 (продвижение/SMM) входит в PRO, иначе докупается за 1 790 ₽.
+
+def is_buyer(uid: str) -> bool:
+    u = users.get(uid, {})
+    return u.get("stage") == "paid" or "buyer" in _ensure_game(uid).get("badges", []) \
+        or u.get("plan", "") in ("base", "vip", "pro")
+
+
+def user_plan(uid: str) -> str:
+    return users.get(uid, {}).get("plan", "")
+
+
+def has_day8(uid: str) -> bool:
+    """8-й день: входит в PRO, либо докуплен отдельно."""
+    return user_plan(uid) == "pro" or _ensure_game(uid).get("day8", False)
+
+
+def _days(uid: str) -> dict:
+    return _ensure_game(uid).setdefault("days", {})
+
+
+def day_open_at(uid: str, n: int) -> float:
+    return _days(uid).get(str(n), {}).get("open", 0)
+
+
+def mark_day_open(uid: str, n: int):
+    _days(uid).setdefault(str(n), {})["open"] = now_ts()
+    save_users()
+
+
+def hw_done(uid: str, n: int) -> bool:
+    return _days(uid).get(str(n), {}).get("hw", False)
+
+
+def mark_hw(uid: str, n: int):
+    _days(uid).setdefault(str(n), {})["hw"] = True
+    save_users()
+
+
+def course_gate(uid: str, n: int):
+    """Возвращает (status, wait_left_сек). status: ok / pay / day8pay / hw / wait."""
+    if not is_buyer(uid):
+        return "pay", 0
+    if n == 8 and not has_day8(uid):
+        return "day8pay", 0
+    if n <= 3:
+        return "ok", 0
+    prev = n - 1
+    if not hw_done(uid, prev):
+        return "hw", 0
+    left = HW_COOLDOWN - (now_ts() - day_open_at(uid, prev))
+    if left > 0:
+        return "wait", int(left)
+    return "ok", 0
+
+
+def course_target(uid: str):
+    """Следующий день для прохождения (3..8) или None, если курс пройден."""
+    opened = [n for n in range(3, TOTAL_DAYS + 1) if day_open_at(uid, n) > 0]
+    if not opened:
+        return 3
+    last = max(opened)
+    return last + 1 if last < TOTAL_DAYS else None
+
+
+def _human_left(left: int) -> str:
+    return f"~{int((left + 3599) // 3600)} ч" if left >= 3600 else f"~{max(1, int((left + 59) // 60))} мин"
+
+
+def course_hub_kb(uid: str):
+    rows = []
+    if is_buyer(uid):
+        target = course_target(uid)
+        if target is None:
+            rows.append([InlineKeyboardButton(text="🔁 Повторить уроки", callback_data="day_3")])
+        else:
+            st, _ = course_gate(uid, target)
+            label = f"📖 Открыть день {target}" if st == "ok" else f"🎓 День {target}"
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"day_{target}")])
+    else:
+        rows.append([InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def lesson_kb(n: int):
+    rows = [[InlineKeyboardButton(text=f"📖 Открыть урок {n}", url=COURSE_LINKS[n])]]
+    if n < TOTAL_DAYS:
+        rows.append([InlineKeyboardButton(text="✅ Я выполнил домашнее задание", callback_data=f"hw_{n}")])
+    rows.append([InlineKeyboardButton(text="📚 Мои уроки", callback_data="course")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def day8_offer_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Открыть 8-й день — 1 790 ₽", callback_data="buy_day8")],
+        [InlineKeyboardButton(text="📚 Мои уроки", callback_data="course")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
 # ─── МЕХАНИКА №1: челлендж дня (тема ротируется по дате — без затрат на AI) ─────────────────────────
 CHALLENGE_THEMES = [
     "Промпт для рекламного фото товара (например, кроссовки на ярком фоне)",
@@ -862,7 +996,10 @@ def start_kb(uid: str = None):
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Истории", callback_data="results"),
         ],
-        [InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author")],
+        [
+            InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
+            InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
+        ],
         [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
         [
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
@@ -934,7 +1071,7 @@ def pay_choice_kb(plan_key: str):
     else:
         rows.append([InlineKeyboardButton(text="💳 Картой РФ через менеджера",
                                           callback_data=f"card_{plan_key}")])
-    if plan_key != "test":
+    if plan_key not in ("test", "day8"):
         rows.append([InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
                                           callback_data=f"bump_{plan_key}")])
     rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
@@ -1145,6 +1282,7 @@ async def cb_day1(call: CallbackQuery):
     user_id = str(call.from_user.id)
     set_stage(user_id, "day1")
     track("day1", user_id)
+    mark_day_open(user_id, 1)
     add_xp(user_id, "day1")
     new_badge = give_badge(user_id, "first_step")
     bonus = badge_toast("first_step") if new_badge else ""
@@ -1220,7 +1358,157 @@ async def cb_day2(call: CallbackQuery):
         "👇 Открыть второй день:"
         + bonus
     )
+    mark_day_open(user_id, 2)
     await show_img(call, "day2.jpg", text, day2_kb())
+
+
+# ─── КУРС: дни 3–8 (после оплаты), домашка → +4 ч → следующий день ──────────────────────────────
+
+@dp.callback_query(lambda c: c.data == "course")
+async def cb_course(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    track("course_open", user_id)
+    if not is_buyer(user_id):
+        await show(
+            call,
+            "📚 <b>Уроки курса</b>\n\n"
+            "Дни 1–2 — бесплатно, попробуй прямо из меню.\n"
+            "Дни 3–8 открываются после оплаты, по одному:\n"
+            "сделал домашку → через 4 часа следующий день.\n\n"
+            "Так материал реально усваивается, а не забывается 🙂\n\n"
+            "👇 Посмотреть тарифы:",
+            tariffs_kb(get_spots()),
+        )
+        return
+    target = course_target(user_id)
+    opened = [n for n in range(3, TOTAL_DAYS + 1) if day_open_at(user_id, n) > 0]
+    progress = max(opened) if opened else 2
+    bar = "▰" * progress + "▱" * (TOTAL_DAYS - progress)
+    if target is None:
+        body = "🎉 Ты прошёл все 8 дней. Красавчик!\nТеперь — практика и первые заказы 🚀"
+    else:
+        st, left = course_gate(user_id, target)
+        if st == "ok":
+            body = f"Следующий — <b>день {target}</b>. Можно открывать 👇"
+        elif st == "wait":
+            body = f"<b>День {target}</b> откроется через {_human_left(left)}. Пусть уляжется 🙂"
+        elif st == "hw":
+            body = f"Отметь домашку дня {target - 1} — и откроется день {target}."
+        elif st == "day8pay":
+            body = ("<b>День 8</b> — бонусный: SMM, продвижение, продажи и фриланс.\n"
+                    "Он не входит в твой тариф, открывается отдельно за 1 790 ₽.")
+        else:
+            body = f"Продолжаем с дня {target}."
+    text = f"📚 <b>Твой курс — {progress}/{TOTAL_DAYS}</b>\n{bar}\n\n{body}"
+    kb = day8_offer_kb() if (target == 8 and not has_day8(user_id)) else course_hub_kb(user_id)
+    await show(call, text, kb)
+
+
+@dp.callback_query(lambda c: c.data.startswith("day_"))
+async def cb_course_day(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    try:
+        n = int(call.data.replace("day_", ""))
+    except ValueError:
+        await call.answer()
+        return
+    if n not in COURSE_LINKS or n < 3:
+        await call.answer()
+        return
+
+    status, left = course_gate(user_id, n)
+    if status == "pay":
+        await show(
+            call,
+            "🔒 <b>Это уроки курса</b>\n\n"
+            "Дни 3–8 открываются после оплаты. Первые 2 дня\n"
+            "ты уже прошёл бесплатно — глянь тарифы, там всё нужное 👇",
+            tariffs_kb(get_spots()),
+        )
+        return
+    if status == "day8pay":
+        await show(
+            call,
+            "🚀 <b>День 8 — продвижение и продажи</b>\n\n"
+            "Финальный бонус-день: SMM, продвижение, продажи,\n"
+            "маркетинг и фриланс — как превратить навык в поток заказов.\n\n"
+            "Он не входит в Базовый и VIP — открывается отдельно\n"
+            "за <b>1 790 ₽</b> (а в тарифе PRO уже включён).\n\n"
+            "👇 Открыть 8-й день:",
+            day8_offer_kb(),
+        )
+        return
+    if status == "hw":
+        await show(
+            call,
+            f"📝 <b>Сначала — домашка дня {n - 1}</b>\n\n"
+            f"Открой день {n - 1}, выполни задание и нажми\n"
+            "«✅ Я выполнил домашнее задание» — тогда откроется следующий.",
+            course_hub_kb(user_id),
+        )
+        return
+    if status == "wait":
+        unlock = datetime.fromtimestamp(day_open_at(user_id, n - 1) + HW_COOLDOWN).strftime("%H:%M %d.%m")
+        await show(
+            call,
+            f"⏳ <b>День {n} откроется через {_human_left(left)}</b> (в {unlock})\n\n"
+            "Пусть материал предыдущего дня уляжется —\n"
+            "так усвоится лучше. Я напомню, как откроется 🙂",
+            course_hub_kb(user_id),
+        )
+        return
+
+    # ok → открываем урок
+    mark_day_open(user_id, n)
+    track(f"day{n}", user_id)
+    title = DAY_TITLES.get(n, "")
+    head = f"🎓 <b>День {n} из {TOTAL_DAYS}" + (f" — {title}" if title else "") + "</b>"
+    bar = "▰" * n + "▱" * (TOTAL_DAYS - n)
+    if n < TOTAL_DAYS:
+        tail = (f"Открывай урок и выполни задание в конце.\n"
+                f"Как сделаешь — жми «выполнил домашку», и через 4 часа\n"
+                f"откроется день {n + 1}.")
+    else:
+        tail = "Это финальный день курса 🏁\nДальше — практика, портфолио и первые заказы 🚀"
+    await show(call, f"{head}\n{bar}\n\n{tail}\n\n👇", lesson_kb(n))
+
+
+@dp.callback_query(lambda c: c.data.startswith("hw_"))
+async def cb_homework(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    try:
+        n = int(call.data.replace("hw_", ""))
+    except ValueError:
+        await call.answer()
+        return
+    if n not in COURSE_LINKS:
+        await call.answer()
+        return
+    mark_hw(user_id, n)
+    track(f"hw_{n}", user_id)
+    nxt = n + 1
+    if nxt > TOTAL_DAYS:
+        await show(call, "🎉 <b>Поздравляю — это была последняя домашка!</b>\nТы прошёл весь курс 🚀", course_hub_kb(user_id))
+        return
+    left = HW_COOLDOWN - (now_ts() - day_open_at(user_id, n))
+    if left <= 0:
+        await show(
+            call,
+            f"🔥 <b>Отлично, домашка засчитана!</b>\nДень {nxt} уже открыт — продолжаем 👇",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"📖 Открыть день {nxt}", callback_data=f"day_{nxt}")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+    else:
+        unlock = datetime.fromtimestamp(day_open_at(user_id, n) + HW_COOLDOWN).strftime("%H:%M %d.%m")
+        await show(
+            call,
+            f"✅ <b>Принял, домашка дня {n} засчитана!</b>\n\n"
+            f"День {nxt} откроется через <b>{_human_left(left)}</b> (в {unlock}).\n"
+            "Небольшая пауза — чтобы всё уложилось. Напомню, как откроется 🙂",
+            course_hub_kb(user_id),
+        )
 
 
 @dp.callback_query(lambda c: c.data == "special_tariffs")
@@ -1290,6 +1578,8 @@ async def cb_tariffs(call: CallbackQuery):
         "📦 <b>БАЗОВЫЙ</b>\n"
         "<s>5 900 ₽</s> → <b>2 970 ₽</b>\n"
         "Все 7 дней курса. Без куратора и бонусов\n\n"
+        "🚀 8-й день (продвижение, SMM, продажи, фриланс)\n"
+        "входит в PRO, в Базовый и VIP — докупается за 1 790 ₽\n\n"
         "🛡 Без риска: сначала 2 дня бесплатно, потом решаешь.\n\n"
         "👇 Выбери тариф:"
     )
@@ -1605,15 +1895,42 @@ async def on_paid(message: Message):
             pass
         return
 
+    # Докупка 8-го дня (продвижение/SMM) — отдельный продукт, тариф не меняет.
+    if plan_key == "day8":
+        _ensure_game(user_id)["day8"] = True
+        save_users()
+        await message.answer(
+            "✅ <b>8-й день куплен!</b>\n\n"
+            "Бонус-день про SMM, продвижение, продажи и фриланс.\n"
+            "Он откроется, когда дойдёшь до него по курсу 👇",
+            reply_markup=course_hub_kb(user_id),
+        )
+        try:
+            await bot.send_message(ADMIN_ID,
+                f"🚀 <b>ОПЛАТА 8-го дня</b>\n🆔 <code>{user_id}</code>\n💳 {method}: {amount_str}")
+        except Exception:
+            pass
+        return
+
+    # Запоминаем купленный тариф (для доступа к дням; в PRO 8-й день уже включён).
+    if plan_key in ("base", "vip", "pro"):
+        users.setdefault(user_id, {})["plan"] = plan_key
+        save_users()
+
     toast = badge_toast("buyer") if new_badge else ""
     await message.answer(
         f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
-        "Доступ ко всем 7 дням курса и бонусам открыт.\n"
+        "Доступ к курсу открыт 🎓 Дальше — по одному дню:\n"
+        "прошёл урок → отметил домашку → через 4 часа\n"
+        "открывается следующий. Так всё усваивается.\n\n"
         f"Менеджер {MANAGER} напишет тебе совсем скоро "
-        "и добавит в закрытый чат с куратором.\n\n"
-        "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
+        "и добавит в чат с куратором.\n\n"
+        "👇 Можно начинать:"
         + toast,
-        reply_markup=back_kb(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📚 Открыть мои уроки", callback_data="course")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ]),
     )
     name = message.from_user.first_name or "Юзер"
     uname = f"@{message.from_user.username}" if message.from_user.username else "нет username"
@@ -1725,17 +2042,35 @@ async def grant_paid_access(chat_id: int, user_id: str, plan_key: str, amount_st
             "🎓 <b>ДЕНЬ 1 курса</b>\n\nДоступ открыт. Запускай первый день прямо сейчас 👇",
             reply_markup=day1_kb(),
         )
+    elif plan_key == "day8":
+        _ensure_game(user_id)["day8"] = True
+        save_users()
+        await bot.send_message(
+            chat_id,
+            "✅ <b>8-й день куплен!</b>\n\n"
+            "Бонус-день про SMM, продвижение, продажи и фриланс.\n"
+            "Он откроется, когда дойдёшь до него по курсу 👇",
+            reply_markup=course_hub_kb(user_id),
+        )
     else:
+        if plan_key in ("base", "vip", "pro"):
+            users.setdefault(user_id, {})["plan"] = plan_key
+            save_users()
         toast = badge_toast("buyer") if new_badge else ""
         await bot.send_message(
             chat_id,
             f"🎉 <b>Оплата прошла! Добро пожаловать в {t['label']}.</b>\n\n"
-            "Доступ ко всем 7 дням курса и бонусам открыт.\n"
+            "Доступ к курсу открыт 🎓 Дальше — по одному дню:\n"
+            "прошёл урок → отметил домашку → через 4 часа\n"
+            "открывается следующий. Так всё усваивается.\n\n"
             f"Менеджер {MANAGER} напишет тебе совсем скоро "
-            "и добавит в закрытый чат с куратором.\n\n"
-            "А пока — загляни в «🎮 Мой прогресс»: ты получил статус студента 👑"
+            "и добавит в чат с куратором.\n\n"
+            "👇 Можно начинать:"
             + toast,
-            reply_markup=back_kb(),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📚 Открыть мои уроки", callback_data="course")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
         )
     try:
         await bot.send_message(
@@ -2662,6 +2997,38 @@ async def cmd_trial(message: Message):
     )
 
 
+@dp.message(Command("course"))
+async def cmd_course(message: Message):
+    user_id = str(message.from_user.id)
+    if not is_buyer(user_id):
+        await message.answer(
+            "📚 <b>Уроки курса</b>\n\n"
+            "Дни 1–2 — бесплатно, попробуй из меню.\n"
+            "Дни 3–8 открываются после оплаты, по одному:\n"
+            "сделал домашку → через 4 часа следующий день.\n\n"
+            "👇 Тарифы:",
+            reply_markup=tariffs_kb(get_spots()),
+        )
+        return
+    target = course_target(user_id)
+    if target is None:
+        body = "🎉 Ты прошёл все 8 дней. Дальше — практика и заказы 🚀"
+    else:
+        st, left = course_gate(user_id, target)
+        if st == "ok":
+            body = f"Следующий — день {target}. Можно открывать 👇"
+        elif st == "wait":
+            body = f"День {target} откроется через {_human_left(left)} 🙂"
+        elif st == "hw":
+            body = f"Отметь домашку дня {target - 1} — откроется день {target}."
+        elif st == "day8pay":
+            body = "День 8 (продвижение/SMM) открывается отдельно за 1 790 ₽."
+        else:
+            body = f"Продолжаем с дня {target}."
+    kb = day8_offer_kb() if (target == 8 and not has_day8(user_id)) else course_hub_kb(user_id)
+    await message.answer(f"📚 <b>Мои уроки</b>\n\n{body}", reply_markup=kb)
+
+
 @dp.message(Command("tariffs"))
 async def cmd_tariffs(message: Message):
     s = get_spots()
@@ -2708,6 +3075,7 @@ async def cmd_help(message: Message):
         "❓ <b>ПОМОЩЬ</b>\n\n"
         "/start — главное меню\n"
         "/trial — бесплатный доступ\n"
+        "/course — мои уроки курса 📚\n"
         "/tariffs — тарифы\n"
         "/profile — твой прогресс, XP, скидка и бейджи 🎮\n"
         "/challenge — челлендж дня с разбором 🥊\n"
@@ -3130,6 +3498,22 @@ async def follow_up_scheduler():
                         "Успей применить на тарифе 👇",
                         tariffs_kb(get_spots()), "fu_disc")
                     continue
+
+                # COURSE: следующий день курса открылся (домашка + 4 ч прошли) — зовём
+                if is_buyer(uid):
+                    tgt = course_target(uid)
+                    if tgt and tgt >= 4:
+                        st_c, _ = course_gate(uid, tgt)
+                        flag = f"fu_day{tgt}_ready"
+                        if st_c == "ok" and not data.get(flag):
+                            await _fu_send(uid,
+                                f"🎓 <b>День {tgt} открылся!</b>\n\n"
+                                "Домашка засчитана, пауза прошла — продолжаем 👇",
+                                InlineKeyboardMarkup(inline_keyboard=[
+                                    [InlineKeyboardButton(text=f"📖 Открыть день {tgt}", callback_data=f"day_{tgt}")],
+                                    [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
+                                ]), flag)
+                            continue
 
             except Exception:
                 pass
