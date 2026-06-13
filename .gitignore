@@ -3,10 +3,12 @@
 .env.local
 *.env
 
-# Рантайм-данные (создаются ботом, не коммитим)
+# Рантайм-данные (создаются ботом, не коммитим — содержат PII пользователей!)
 events.json
 spots.json
 promo.json
+users.json
+referrals.json
 
 # Python
 __pycache__/

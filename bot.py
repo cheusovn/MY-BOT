@@ -5,7 +5,6 @@ import logging
 import random
 import string
 import time
-import base64
 import aiohttp
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
@@ -121,19 +120,19 @@ def generate_code(name: str) -> str:
 
 # ─── SOCIAL PROOF: ротация живых отзывов ────────────────────────────────────────────────────────
 
-RECENT_BUYS = [
-    "🔥 Анна из Москвы взяла VIP — 2 минуты назад",
-    "🔥 Дмитрий из СПб оформил PRO — 7 минут назад",
-    "🔥 Мария из Казани взяла VIP — 12 минут назад",
-    "🔥 Сергей из Новосибирска взял VIP — 18 минут назад",
-    "🔥 Ольга из Краснодара взяла PRO — 23 минуты назад",
-    "🔥 Алексей из Екатеринбурга взял VIP — 31 минуту назад",
-    "🔥 Юлия из Нижнего Новгорода взяла VIP — 42 минуты назад",
+# Честный social proof: агрегированные формулировки без выдуманных имён/городов/точного времени,
+# которые легко опровергнуть и потерять доверие. Опираемся на реальные счётчики, где можем.
+SOCIAL_PROOF_LINES = [
+    "🔥 Сегодня курс уже выбрали несколько человек",
+    "🔥 VIP с куратором — самый частый выбор на этой неделе",
+    "🔥 Большинство берут именно VIP (7 из 10)",
+    "🔥 Места по акционной цене разбирают каждый день",
+    "👥 Поток набирается — успей попасть по текущей цене",
 ]
 
 
 def social_proof() -> str:
-    return random.choice(RECENT_BUYS)
+    return random.choice(SOCIAL_PROOF_LINES)
 
 
 GOAL_LABELS = {
@@ -228,150 +227,94 @@ BADGES = {
     "buyer":        "👑 Студент академии",
     "streak3":      "🔥 Серия 3 дня",
     "streak7":      "⚡ Серия 7 дней",
-    "homework":     "📝 Работа проверена AI",
+    "challenger":   "🥊 Боец челленджа",
+    "lucky":        "🎰 Крутанул колесо удачи",
 }
 
 XP_RULES = {
     "day1": 30, "day2": 50, "tariffs": 20,
     "free_gift": 15, "referral": 25, "daily": 10, "buy": 100,
-    "homework": 40,
+    "challenge": 30,
 }
 
-# ─── AI-НАСТАВНИК: проверка домашних работ ─────────────────────────────────────────────────────────
-# Каскад провайдеров с бесплатными лимитами. Ключи ТОЛЬКО из окружения (никогда не хардкодим).
-# Бот пробует провайдеров по очереди: упёрся в лимит/ошибку → автоматически следующий.
-# Активируются только те, чей ключ задан в env. Все эндпоинты OpenAI-совместимые.
+# ─── СКИДКА ЗА ПРОГРЕСС (механика №6): чем больше XP — тем больше личная скидка ──────────────────
+# Порог XP → размер скидки в ₽. Скидка "тает" — действует ограниченное время после разблокировки.
+DISCOUNT_TIERS = [(100, 500), (300, 1000), (700, 1500)]
+DISCOUNT_TTL = 24 * 3600  # сколько живёт разблокированная скидка, сек
+
+# ─── AI ЧЕРЕЗ OPENROUTER (только OpenRouter, без прямых запросов в Google/др.) ──────────────────────
+# Один провайдер — OpenRouter. Ключ ТОЛЬКО из окружения (никогда не хардкодим).
+# Каскад моделей внутри OpenRouter: сначала бесплатные :free, при лимите/ошибке — дешёвый платный
+# резерв. Всё текстовое и короткое (max_tokens мал) → расход минимальный.
 #
-# Env-переменные ключей (добавляй любые — чем больше, тем устойчивее):
-#   OPENROUTER_API_KEY  — openrouter.ai (много :free vision-моделей)
-#   GROQ_API_KEY        — groq.com (быстрый бесплатный тир, Llama 4 vision)
-#   GEMINI_API_KEY      — Google AI Studio (бесплатный тир, Gemini vision)
-#   MISTRAL_API_KEY     — mistral.ai (бесплатный тир, Pixtral vision)
-#   OPENAI_API_KEY      — OpenAI (платно, как последний резерв)
-
+# Env: OPENROUTER_API_KEY — openrouter.ai
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
-MISTRAL_KEY = os.environ.get("MISTRAL_API_KEY", "")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_EXTRA = {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"}
+
+# Бесплатные текстовые модели (пробуем по очереди), затем дешёвый платный резерв.
+AI_FREE_MODELS = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+]
+AI_PAID_RESERVE = "openai/gpt-4o-mini"  # дешёвый резерв при исчерпании free-лимитов
 
 
-def _build_providers():
-    """Упорядоченный список попыток: сначала бесплатные тиры, платное — в конце."""
-    p = []
-    # 1) OpenRouter — несколько :free vision-моделей подряд (у каждой свой лимит)
-    if OPENROUTER_KEY:
-        for model in (
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "qwen/qwen2.5-vl-72b-instruct:free",
-        ):
-            p.append({
-                "name": f"OpenRouter:{model}", "vision": True,
-                "url": "https://openrouter.ai/api/v1/chat/completions",
-                "key": OPENROUTER_KEY,
-                "model": model,
-                "extra": {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"},
-            })
-    # 2) Google Gemini (бесплатный тир, vision)
-    if GEMINI_KEY:
-        p.append({
-            "name": "Gemini:flash", "vision": True,
-            "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-            "key": GEMINI_KEY, "model": "gemini-2.0-flash", "extra": {},
-        })
-    # 3) Groq (бесплатный тир, Llama 4 — vision)
-    if GROQ_KEY:
-        p.append({
-            "name": "Groq:llama4", "vision": True,
-            "url": "https://api.groq.com/openai/v1/chat/completions",
-            "key": GROQ_KEY, "model": "meta-llama/llama-4-scout-17b-16e-instruct", "extra": {},
-        })
-    # 4) Mistral (бесплатный тир, Pixtral — vision)
-    if MISTRAL_KEY:
-        p.append({
-            "name": "Mistral:pixtral", "vision": True,
-            "url": "https://api.mistral.ai/v1/chat/completions",
-            "key": MISTRAL_KEY, "model": "pixtral-12b-2409", "extra": {},
-        })
-    # 5) OpenRouter платная резервная (если ключ есть)
-    if OPENROUTER_KEY:
-        p.append({
-            "name": "OpenRouter:gpt-4o-mini", "vision": True,
-            "url": "https://openrouter.ai/api/v1/chat/completions",
-            "key": OPENROUTER_KEY, "model": "openai/gpt-4o-mini",
-            "extra": {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"},
-        })
-    # 6) OpenAI напрямую (платно, последний резерв)
-    if OPENAI_KEY:
-        p.append({
-            "name": "OpenAI:gpt-4o-mini", "vision": True,
-            "url": "https://api.openai.com/v1/chat/completions",
-            "key": OPENAI_KEY, "model": "gpt-4o-mini", "extra": {},
-        })
-    return p
-
-
-AI_PROVIDERS = _build_providers()
-
-HW_SYSTEM_PROMPT = (
-    "Ты — доброжелательный, но требовательный наставник курса по нейросетям "
-    "True AI Academy. Ученик присылает свою домашнюю работу: изображение, кадр из "
-    "AI-видео, карточку товара или текст/промпт, созданные с помощью нейросетей. "
-    "Дай разбор на русском, кратко и по делу, строго в таком формате (с эмодзи-заголовками):\n\n"
-    "✅ <b>Что получилось хорошо</b> — 2-3 пункта\n"
-    "🛠 <b>Что улучшить</b> — 2-3 конкретных совета (композиция, свет, промпт, детали)\n"
-    "⭐ <b>Оценка</b> — N/10\n"
-    "👉 <b>Следующий шаг</b> — одно практическое задание\n\n"
-    "Будь поддерживающим, мотивируй продолжать. Не используй markdown ** **, только "
-    "HTML-теги <b></b>. Максимум ~180 слов."
-)
-
-
-async def _try_provider(prov, content) -> str:
+async def _openrouter_call(model: str, system: str, user: str, max_tokens: int) -> str:
     payload = {
-        "model": prov["model"],
+        "model": model,
         "messages": [
-            {"role": "system", "content": HW_SYSTEM_PROMPT},
-            {"role": "user", "content": content},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
-        "max_tokens": 700,
-        "temperature": 0.6,
+        "max_tokens": max_tokens,
+        "temperature": 0.7,
     }
-    headers = {"Authorization": f"Bearer {prov['key']}", "Content-Type": "application/json"}
-    headers.update(prov.get("extra", {}))
-    timeout = aiohttp.ClientTimeout(total=45)
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    headers.update(OPENROUTER_EXTRA)
+    timeout = aiohttp.ClientTimeout(total=40)
     async with aiohttp.ClientSession(timeout=timeout) as s:
-        async with s.post(prov["url"], json=payload, headers=headers) as r:
+        async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
             data = await r.json()
             if r.status != 200:
                 raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
             return data["choices"][0]["message"]["content"].strip()
 
 
-async def ai_review(user_text: str, image_b64: str = None) -> str:
-    """Перебирает провайдеров по очереди (бесплатные тиры → платные). None, если все недоступны."""
-    if not AI_PROVIDERS:
+async def ai_text(system: str, user: str, max_tokens: int = 350) -> str:
+    """Короткий текстовый вызов через OpenRouter: free-модели → дешёвый платный резерв.
+    Возвращает None, если ключа нет или всё недоступно (вызывающий делает мягкий fallback)."""
+    if not OPENROUTER_KEY:
         return None
-    content = [{"type": "text", "text": user_text or "Проверь мою работу по курсу нейросетей."}]
-    if image_b64:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
-        })
-    for prov in AI_PROVIDERS:
-        if image_b64 and not prov.get("vision"):
-            continue
+    for model in AI_FREE_MODELS + [AI_PAID_RESERVE]:
         try:
-            result = await _try_provider(prov, content)
+            result = await _openrouter_call(model, system, user, max_tokens)
             if result:
-                logging.info(f"AI review OK via {prov['name']}")
+                logging.info(f"AI OK via OpenRouter:{model}")
                 return result
         except Exception as e:
-            logging.warning(f"AI provider {prov['name']} failed: {e} → next")
+            logging.warning(f"OpenRouter:{model} failed: {e} → next")
             continue
-    logging.error("AI review: all providers exhausted")
+    logging.error("AI: all OpenRouter models exhausted")
     return None
+
+
+CHALLENGE_SYSTEM = (
+    "Ты — строгий, но поддерживающий наставник курса по нейросетям True AI Academy. "
+    "Ученик прислал свой промпт на заданную тему дня. Оцени его как промпт для нейросети. "
+    "Ответь на русском СТРОГО в формате (HTML-теги <b></b>, без markdown ** **):\n\n"
+    "⭐ <b>Оценка:</b> N/10\n"
+    "✅ <b>Сильное:</b> 1 короткий пункт\n"
+    "🛠 <b>Улучши так:</b> 1 конкретный совет\n\n"
+    "Будь краток (до ~70 слов), мотивируй продолжать каждый день."
+)
+
+WHEEL_SYSTEM = (
+    "Ты — ведущий розыгрыша в школе нейросетей True AI Academy. Ученик выиграл приз на колесе "
+    "удачи. В 1-2 тёплых предложениях на русском поздравь и свяжи приз с его целью. "
+    "Только HTML <b></b>, без markdown. Без выдуманных фактов о человеке."
+)
 
 
 def _ensure_game(uid: str):
@@ -431,6 +374,133 @@ def touch_streak(uid: str):
     return u["streak"], new_badge
 
 
+# ─── RATE-LIMIT: защита от спама AI / абуза механик ────────────────────────────────────────────────
+def rate_ok(uid: str, key: str, window: int) -> bool:
+    """True, если с прошлого срабатывания key прошло >= window сек. Иначе False (заблокировано)."""
+    u = _ensure_game(uid)
+    rl = u.setdefault("rl", {})
+    last = rl.get(key, 0)
+    if now_ts() - last < window:
+        return False
+    rl[key] = now_ts()
+    save_users()
+    return True
+
+
+def rate_left(uid: str, key: str, window: int) -> int:
+    """Сколько секунд осталось до разблокировки (0 — можно)."""
+    u = _ensure_game(uid)
+    last = u.get("rl", {}).get(key, 0)
+    left = int(window - (now_ts() - last))
+    return max(0, left)
+
+
+# ─── МЕХАНИКА №6: личная скидка за прогресс (endowed progress + loss aversion) ──────────────────────
+def unlocked_discount(uid: str) -> int:
+    """Размер скидки (₽), заслуженной по текущему XP. Чисто по порогам, без срока."""
+    u = _ensure_game(uid)
+    xp = u.get("xp", 0)
+    disc = 0
+    for thr, amount in DISCOUNT_TIERS:
+        if xp >= thr:
+            disc = amount
+    return disc
+
+
+def refresh_discount(uid: str) -> int:
+    """Фиксирует разблокированную скидку и продлевает срок её жизни. Возвращает активную скидку (₽)."""
+    u = _ensure_game(uid)
+    disc = unlocked_discount(uid)
+    if disc > 0:
+        prev = u.get("discount", 0)
+        # Продлеваем дедлайн, если скидка выросла или истекла
+        if disc > prev or now_ts() > u.get("discount_until", 0):
+            u["discount_until"] = now_ts() + DISCOUNT_TTL
+        u["discount"] = disc
+        save_users()
+    return disc
+
+
+def active_discount(uid: str) -> int:
+    """Активная (не сгоревшая) скидка в ₽ — 0, если истекла или не заслужена."""
+    u = _ensure_game(uid)
+    disc = min(u.get("discount", 0), unlocked_discount(uid))
+    if disc <= 0:
+        return 0
+    if now_ts() > u.get("discount_until", 0):
+        return 0
+    return disc
+
+
+def discount_deadline(uid: str) -> str:
+    u = _ensure_game(uid)
+    until = u.get("discount_until", 0)
+    if until <= now_ts():
+        return ""
+    return datetime.fromtimestamp(until).strftime("%H:%M %d.%m")
+
+
+def price_with_discount(uid: str, plan_key: str) -> tuple:
+    """(базовая_акция, финальная_цена_со_скидкой, скидка_₽). Не опускаем ниже 990 ₽."""
+    t = TARIFFS.get(plan_key, TARIFFS["vip"])
+    base = t["now"]
+    disc = active_discount(uid)
+    final = max(990, base - disc)
+    return base, final, base - final
+
+
+# ─── МЕХАНИКА №7: колесо удачи (variable reward + reciprocity) ─────────────────────────────────────
+# Каждый приз — повод оплатить СЕГОДНЯ. type: discount даёт доп. скидку поверх скидки за прогресс.
+WHEEL_PRIZES = [
+    {"id": "disc1000", "label": "💸 Доп. скидка 1 000 ₽", "type": "discount", "value": 1000},
+    {"id": "disc1500", "label": "💸 Доп. скидка 1 500 ₽", "type": "discount", "value": 1500},
+    {"id": "prompts",  "label": "🎁 100+ продающих промптов", "type": "bonus", "value": 0},
+    {"id": "guide",    "label": "📘 Гайд «30 источников заказов»", "type": "bonus", "value": 0},
+    {"id": "vipmonth", "label": "👑 Месяц VIP-куратора бесплатно", "type": "bonus", "value": 0},
+    {"id": "disc500",  "label": "💸 Доп. скидка 500 ₽", "type": "discount", "value": 500},
+]
+
+
+def spin_wheel(uid: str) -> dict:
+    """Крутит колесо один раз за всё время. Возвращает приз или None, если уже крутил."""
+    u = _ensure_game(uid)
+    if u.get("wheel"):
+        return None
+    prize = random.choice(WHEEL_PRIZES)
+    u["wheel"] = prize["id"]
+    u["wheel_at"] = now_ts()
+    if prize["type"] == "discount":
+        # Доп. скидка поверх прогресс-скидки, со своим суточным дедлайном
+        u["wheel_discount"] = prize["value"]
+        u["wheel_until"] = now_ts() + 24 * 3600
+    save_users()
+    return prize
+
+
+def wheel_discount_active(uid: str) -> int:
+    u = _ensure_game(uid)
+    if now_ts() > u.get("wheel_until", 0):
+        return 0
+    return u.get("wheel_discount", 0)
+
+
+# ─── МЕХАНИКА №1: челлендж дня (тема ротируется по дате — без затрат на AI) ─────────────────────────
+CHALLENGE_THEMES = [
+    "Промпт для рекламного фото товара (например, кроссовки на ярком фоне)",
+    "Промпт для логотипа кофейни в минималистичном стиле",
+    "Промпт для обложки YouTube-ролика про заработок",
+    "Промпт для карточки товара на маркетплейс (Wildberries/Ozon)",
+    "Промпт для аватарки в деловом стиле для соцсетей",
+    "Промпт для рекламного баннера распродажи",
+    "Промпт для иллюстрации к посту в Telegram-канал",
+]
+
+
+def challenge_theme() -> str:
+    idx = datetime.now().timetuple().tm_yday % len(CHALLENGE_THEMES)
+    return CHALLENGE_THEMES[idx]
+
+
 def progress_bar(xp: int, nxt) -> str:
     if not nxt:
         return "██████████ MAX"
@@ -452,6 +522,28 @@ def profile_text(uid: str, name: str) -> str:
     nxt_line = f"До «{nxt[1]}»: {nxt[0] - xp} XP" if nxt else "Максимальный уровень 👑"
     badges = u.get("badges", [])
     badges_str = "  ".join(BADGES[b] for b in badges if b in BADGES) or "— пока нет, всё впереди!"
+
+    # Механика №6: личная скидка за прогресс
+    refresh_discount(uid)
+    disc = active_discount(uid)
+    nxt_disc = next(((thr, amt) for thr, amt in DISCOUNT_TIERS if xp < thr), None)
+    if disc > 0:
+        dl = discount_deadline(uid)
+        disc_block = (
+            f"💸 <b>Твоя личная скидка: {disc} ₽</b>\n"
+            f"⏳ Сгорит: <b>{dl}</b> — успей применить на тарифе!\n"
+        )
+        if nxt_disc:
+            disc_block += f"📈 До скидки {nxt_disc[1]} ₽ осталось {nxt_disc[0] - xp} XP\n"
+        disc_block += "\n"
+    elif nxt_disc:
+        disc_block = (
+            f"💸 <b>Накопи XP — открой скидку!</b>\n"
+            f"До скидки {nxt_disc[1]} ₽ осталось <b>{nxt_disc[0] - xp} XP</b>\n\n"
+        )
+    else:
+        disc_block = ""
+
     return (
         f"🎮 <b>Профиль: {name}</b>\n\n"
         f"Уровень: <b>{lvl}</b>\n"
@@ -459,9 +551,10 @@ def profile_text(uid: str, name: str) -> str:
         f"{bar}\n"
         f"{nxt_line}\n\n"
         f"🔥 Серия дней подряд: <b>{u.get('streak', 0)}</b>\n\n"
+        f"{disc_block}"
         f"🏅 <b>Достижения ({len(badges)}/{len(BADGES)}):</b>\n{badges_str}\n\n"
-        "💡 Заходи каждый день и проходи уроки — XP и бейджи копятся, "
-        "а топ-ученики недели получают бонусы."
+        "💡 Каждый день: челлендж + урок = XP, бейджи и рост скидки. "
+        "Топ-3 недели получают бонусы."
     )
 
 
@@ -480,9 +573,25 @@ def leaderboard_text() -> str:
     return (
         "🏆 <b>РЕЙТИНГ УЧЕНИКОВ НЕДЕЛИ</b>\n\n"
         f"{body}\n\n"
-        "💡 XP даётся за уроки, серии дней и активность. "
-        "Топ-3 в конце недели получают бонусные материалы."
+        "🎁 <b>ПРИЗЫ В КОНЦЕ НЕДЕЛИ:</b>\n"
+        "🥇 1 место — VIP-доступ бесплатно\n"
+        "🥈 2 место — скидка 2 000 ₽\n"
+        "🥉 3 место — гайд «30 источников заказов»\n\n"
+        "💡 XP даётся за челлендж дня, уроки и серии. "
+        "Пройди челлендж сегодня — и обгони соседей по таблице!"
     )
+
+
+def my_rank(uid: str) -> tuple:
+    """(позиция, xp) текущего юзера в рейтинге; позиция с 1."""
+    ranked = sorted(
+        ((u_id, u.get("xp", 0)) for u_id, u in users.items()),
+        key=lambda x: x[1], reverse=True,
+    )
+    for i, (u_id, xp) in enumerate(ranked, 1):
+        if u_id == uid:
+            return i, xp
+    return len(ranked) + 1, 0
 
 
 def badge_toast(badge_id: str) -> str:
@@ -493,7 +602,7 @@ class BroadcastState(StatesGroup):
     waiting = State()
 
 
-class HomeworkState(StatesGroup):
+class ChallengeState(StatesGroup):
     waiting = State()
 
 
@@ -515,11 +624,11 @@ def start_kb():
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Кейсы", callback_data="results"),
         ],
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP) — оценит AI", callback_data="challenge")],
         [
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
-        [InlineKeyboardButton(text="🤖 Сдать ДЗ — проверит AI-наставник", callback_data="homework")],
         [InlineKeyboardButton(text="💸 Заработать 30% с друзей", callback_data="referral")],
     ])
 
@@ -543,7 +652,14 @@ def day1_kb():
 def day2_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔥 Открыть 2-й день", url=TRIAL_DAY_2)],
-        [InlineKeyboardButton(text="✅ Готово — забрать ЗАКРЫТОЕ предложение 🎁", callback_data="special_tariffs")],
+        [InlineKeyboardButton(text="✅ Готово — крутить КОЛЕСО УДАЧИ 🎰", callback_data="wheel")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+
+
+def wheel_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎰 КРУТИТЬ КОЛЕСО", callback_data="wheel_spin")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
@@ -653,7 +769,9 @@ async def cmd_start(message: Message, state: FSMContext):
     payload = ""
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1:
-        payload = parts[1].strip()
+        # Санитайз: только буквы/цифры/_/-, максимум 32 символа — иначе раздувание счётчиков
+        raw = parts[1].strip()
+        payload = "".join(c for c in raw if c.isalnum() or c in "_-")[:32]
     track("start_" + (payload or "direct"), user_id)
     touch_streak(user_id)
 
@@ -824,18 +942,33 @@ async def cb_special_tariffs(call: CallbackQuery):
 
     deadline = (datetime.now() + timedelta(hours=24)).strftime("%H:%M %d.%m")
 
+    # Механика №6+№7: суммарная личная скидка (прогресс + колесо)
+    refresh_discount(user_id)
+    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
+    base_vip, final_vip, _ = price_with_discount(user_id, "vip")
+    final_vip = max(990, final_vip - wheel_discount_active(user_id))
+    if total_disc > 0:
+        disc_block = (
+            f"🎯 <b>ТВОЯ ЛИЧНАЯ СКИДКА: −{total_disc} ₽</b>\n"
+            f"VIP для тебя: <s>{base_vip} ₽</s> → <b>{final_vip} ₽</b>\n"
+            "⏳ Скидка сгорает вместе с предложением — не упусти!\n\n"
+        )
+    else:
+        disc_block = ""
+
     text = (
         "🔐 <b>ЗАКРЫТОЕ ПРЕДЛОЖЕНИЕ — ПРОГРЕСС: ███ 100%</b>\n"
         "Ты прошёл 2 дня. Это видят единицы.\n\n"
         f"⏳ Сгорает до: <b>{deadline}</b> (24 часа)\n"
         f"⚠️ Мест по этой цене: <b>{s}</b>\n\n"
+        f"{disc_block}"
         "━━━━━━━━━━━━━━━━\n"
         "⭐ <b>VIP С КУРАТОРОМ</b>\n"
         "<s>9 900 ₽</s> → <b>4 970 ₽</b>  (экономия 4 930 ₽)\n"
         "это <b>16 ₽ в день</b> — дешевле чашки кофе\n\n"
         "Что внутри:\n"
         "✅ Все 7 дней курса + доступ навсегда\n"
-        "✅ Личный куратор + проверка ДЗ\n"
+        "✅ Личный куратор + разбор твоих работ\n"
         "✅ Чат поддержки 24/7\n\n"
         "🎁 <b>+ БОНУСЫ только сегодня:</b>\n"
         "   1) Гайд «30 источников заказов» — <s>2 990 ₽</s>\n"
@@ -869,7 +1002,7 @@ async def cb_tariffs(call: CallbackQuery):
         "<s>9 900 ₽</s> → <b>4 970 ₽</b>  или 16 ₽/день\n"
         "━━━━━━━━━━━━━━━━\n"
         "✅ Все 7 дней курса\n"
-        "✅ Личный куратор + проверка ДЗ\n"
+        "✅ Личный куратор + разбор твоих работ\n"
         "✅ Закрытый чат 24/7\n"
         "✅ Доступ навсегда\n"
         "🎁 + Бонусы на 6 470 ₽ бесплатно\n\n"
@@ -998,15 +1131,28 @@ async def cb_buy(call: CallbackQuery):
     set_stage(user_id, "checkout")
     track(f"buy_{plan_key}", user_id)
 
+    refresh_discount(user_id)
+    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
+    final = max(990, t["now"] - total_disc)
+    if total_disc > 0:
+        price_line = (
+            f"<s>{t['old']:,} ₽</s> → <s>{t['now']:,} ₽</s> → <b>{final:,} ₽</b>\n"
+            f"🎯 С учётом твоей личной скидки <b>−{total_disc} ₽</b>\n"
+        ).replace(",", " ")
+        disc_hint = "💡 Скидка за прогресс уже учтена — назови её менеджеру.\n"
+    else:
+        price_line = f"<s>{t['old']:,} ₽</s> → <b>{t['now']:,} ₽</b>\n".replace(",", " ")
+        disc_hint = "💡 Есть промокод друга? Скидку 500 ₽ применит менеджер.\n"
+
     text = (
         f"✅ <b>Отличный выбор — {t['label']}!</b>\n\n"
-        f"<s>{t['old']:,} ₽</s> → <b>{t['now']:,} ₽</b>\n".replace(",", " ") +
+        f"{price_line}"
         f"{t['perks']}\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "💳 <b>Оплата картой РФ</b> — быстро и безопасно через ЮKassa,\n"
         "доступ открывается сразу после оплаты.\n\n"
         "🛡 Без риска: сначала 2 дня бесплатно, потом решаешь.\n"
-        "💡 Есть промокод друга? Скидку 500 ₽ применит менеджер.\n\n"
+        f"{disc_hint}\n"
         "👇"
     )
     await show(call, text, pay_choice_kb(plan_key))
@@ -1036,14 +1182,19 @@ async def cb_card(call: CallbackQuery):
     name = call.from_user.first_name or "Юзер"
     uname = f"@{call.from_user.username}" if call.from_user.username else "нет username"
     goal = GOAL_LABELS.get(users.get(user_id, {}).get("goal", ""), "—")
+    total_disc = active_discount(user_id) + wheel_discount_active(user_id)
+    final = max(990, t["now"] - total_disc)
+    disc_note = f" (личная скидка −{total_disc} ₽)" if total_disc else ""
+    wheel_prize = _ensure_game(user_id).get("wheel", "")
+    prize_note = f"\n🎰 Приз колеса: {wheel_prize}" if wheel_prize else ""
     try:
         await bot.send_message(
             ADMIN_ID,
             f"💰 <b>НОВАЯ ЗАЯВКА (карта)!</b>\n\n"
             f"👤 {name} ({uname})\n"
             f"🆔 ID: <code>{call.from_user.id}</code>\n"
-            f"📦 Тариф: {t['label']} — {t['now']} ₽\n"
-            f"🎯 Цель: {goal}"
+            f"📦 Тариф: {t['label']} — <b>{final} ₽</b>{disc_note}\n"
+            f"🎯 Цель: {goal}{prize_note}"
         )
     except Exception:
         pass
@@ -1108,6 +1259,15 @@ async def cb_yookassa(call: CallbackQuery):
 
 @dp.pre_checkout_query()
 async def pre_checkout(pcq: PreCheckoutQuery):
+    # Валидация: принимаем только наши инвойсы (payload вида course_<plan>)
+    payload = pcq.invoice_payload or ""
+    plan_key = payload.replace("course_", "")
+    if not payload.startswith("course_") or plan_key not in TARIFFS:
+        await bot.answer_pre_checkout_query(
+            pcq.id, ok=False,
+            error_message="Некорректный заказ. Откройте оплату заново через /tariffs."
+        )
+        return
     await bot.answer_pre_checkout_query(pcq.id, ok=True)
 
 
@@ -1256,6 +1416,7 @@ async def cb_profile(call: CallbackQuery):
     if new_badge:
         text += badge_toast(new_badge)
     await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
         [InlineKeyboardButton(text="🎓 Пройти урок (+XP)", callback_data="day1")],
         [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
@@ -1264,121 +1425,209 @@ async def cb_profile(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "leaderboard")
 async def cb_leaderboard(call: CallbackQuery):
-    await show(call, leaderboard_text(), InlineKeyboardMarkup(inline_keyboard=[
+    user_id = str(call.from_user.id)
+    pos, xp = my_rank(user_id)
+
+    # Разрыв до призовой зоны (топ-3) — мотивируем обогнать
+    ranked = sorted((u.get("xp", 0) for u in users.values()), reverse=True)
+    if pos > 3 and len(ranked) >= 3:
+        gap = ranked[2] - xp + 1
+        rank_line = (
+            f"\n\n📍 <b>Ты на {pos}-м месте</b> ({xp} XP).\n"
+            f"До призовой тройки — <b>{max(1, gap)} XP</b>. "
+            "Пройди челлендж дня и обгони!"
+        )
+    elif pos <= 3 and xp > 0:
+        rank_line = f"\n\n🔥 <b>Ты в призовой тройке — {pos} место!</b> Удержи позицию до конца недели."
+    else:
+        rank_line = "\n\n📍 Ты ещё не в рейтинге — пройди челлендж дня, чтобы попасть в таблицу!"
+
+    await show(call, leaderboard_text() + rank_line, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
         [InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile")],
-        [InlineKeyboardButton(text="🎓 Заработать XP", callback_data="day1")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
 
 
-# ─── AI-НАСТАВНИК: проверка ДЗ ─────────────────────────────────────────────────────────────────────
+# ─── МЕХАНИКА №7: КОЛЕСО УДАЧИ (после 2-го дня) ────────────────────────────────────────────────────
 
-def homework_cancel_kb():
+@dp.callback_query(lambda c: c.data == "wheel")
+async def cb_wheel(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    give_badge(user_id, "day2_done")
+    track("wheel_open", user_id)
+
+    u = _ensure_game(user_id)
+    if u.get("wheel"):
+        # Уже крутил — ведём сразу к закрытому предложению
+        await cb_special_tariffs(call)
+        return
+
+    text = (
+        "🎰 <b>КОЛЕСО УДАЧИ — ТОЛЬКО ДЛЯ ДОШЕДШИХ ДО КОНЦА</b>\n\n"
+        "Ты прошёл 2 дня — это видят единицы. 🔥\n"
+        "За это даю <b>один</b> бесплатный прокрут колеса.\n\n"
+        "Что можно выиграть:\n"
+        "💸 доп. скидку до 1 500 ₽\n"
+        "🎁 100+ продающих промптов\n"
+        "📘 гайд «30 источников заказов»\n"
+        "👑 месяц VIP-куратора бесплатно\n\n"
+        "⚠️ Приз действует <b>только при оплате сегодня</b>.\n\n"
+        "👇 Крути:"
+    )
+    await show(call, text, wheel_kb())
+
+
+@dp.callback_query(lambda c: c.data == "wheel_spin")
+async def cb_wheel_spin(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    prize = spin_wheel(user_id)
+    give_badge(user_id, "lucky")
+    track("wheel_spin", user_id, prize["id"] if prize else "already")
+
+    if prize is None:
+        await call.answer("Ты уже крутил колесо 🙂", show_alert=True)
+        await cb_special_tariffs(call)
+        return
+
+    # Персональное поздравление от AI (короткое, дешёвое). Fallback — без AI.
+    await call.answer()
+    goal = GOAL_LABELS.get(users.get(user_id, {}).get("goal", ""), "работу с нейросетями")
+    congrats = None
+    if rate_ok(user_id, "ai_wheel", 60):
+        congrats = await ai_text(
+            WHEEL_SYSTEM,
+            f"Приз: {prize['label']}. Цель ученика: {goal}. Поздравь в 1-2 предложениях.",
+            max_tokens=120,
+        )
+    congrats = congrats or "Поздравляю — отличный приз! Самое время закрепить результат. 🎉"
+
+    extra = ""
+    if prize["type"] == "discount":
+        extra = (
+            f"\n\n💸 Скидка <b>{prize['value']} ₽</b> уже закреплена за тобой "
+            "и суммируется с твоей скидкой за прогресс. ⏳ Действует 24 часа."
+        )
+
+    await show(
+        call,
+        f"🎉 <b>ТЫ ВЫИГРАЛ:</b> {prize['label']}\n\n{congrats}{extra}\n\n"
+        "👇 Забери приз вместе с закрытым предложением:",
+        InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Открыть закрытое предложение", callback_data="special_tariffs")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+        ]),
+    )
+
+
+# ─── МЕХАНИКА №1: ЧЕЛЛЕНДЖ ДНЯ (промпт-дуэль, оценивает AI) ─────────────────────────────────────────
+
+def challenge_cancel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✖️ Отмена", callback_data="hw_cancel")],
+        [InlineKeyboardButton(text="✖️ Отмена", callback_data="ch_cancel")],
     ])
 
 
-@dp.callback_query(lambda c: c.data == "homework")
-async def cb_homework(call: CallbackQuery, state: FSMContext):
-    await state.set_state(HomeworkState.waiting)
+@dp.callback_query(lambda c: c.data == "challenge")
+async def cb_challenge(call: CallbackQuery, state: FSMContext):
+    user_id = str(call.from_user.id)
+    # Один челлендж в день на юзера (удержание + контроль расхода)
+    if not rate_ok(user_id, "challenge", 20 * 3600):
+        left_h = max(1, rate_left(user_id, "challenge", 20 * 3600) // 3600)
+        await show(
+            call,
+            f"🥊 <b>Челлендж дня уже пройден!</b>\n\n"
+            f"Возвращайся через ~{left_h} ч за новой темой и новым XP.\n"
+            "А пока — забери XP за урок или подними скидку за прогресс 👇",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎮 Мой прогресс и скидка", callback_data="profile")],
+                [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+        return
+    await state.set_state(ChallengeState.waiting)
     text = (
-        "🤖 <b>AI-НАСТАВНИК — ПРОВЕРКА ДЗ</b>\n\n"
-        "Пришли свою работу одним сообщением:\n"
-        "🖼 <b>картинку</b> (изображение, карточка, кадр из видео)\n"
-        "✍️ или <b>текст/промпт</b>, который ты составил.\n\n"
-        "Я разберу: что получилось, что улучшить, оценю\n"
-        "и подскажу следующий шаг. За проверку — <b>+40 XP</b> 🏅\n\n"
-        "💡 К картинке можно добавить подпись — что ты хотел получить.\n\n"
-        "👇 Жду твою работу:"
+        "🥊 <b>ЧЕЛЛЕНДЖ ДНЯ</b>\n\n"
+        f"📌 <b>Тема:</b> {challenge_theme()}\n\n"
+        "Напиши свой <b>промпт</b> для нейросети на эту тему "
+        "(одним сообщением). AI оценит его по 10-балльной шкале "
+        "и подскажет, как улучшить.\n\n"
+        "🏅 За попытку — <b>+30 XP</b> и рост личной скидки.\n\n"
+        "👇 Жду твой промпт:"
     )
-    await show(call, text, homework_cancel_kb())
+    await show(call, text, challenge_cancel_kb())
 
 
-@dp.callback_query(lambda c: c.data == "hw_cancel")
-async def cb_hw_cancel(call: CallbackQuery, state: FSMContext):
+@dp.callback_query(lambda c: c.data == "ch_cancel")
+async def cb_ch_cancel(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show(call, "Окей, проверку отменил. Возвращайся, когда будешь готов 👇", start_kb())
+    await show(call, "Окей, челлендж отложил. Возвращайся в любой момент 👇", start_kb())
 
 
-@dp.message(HomeworkState.waiting)
-async def process_homework(message: Message, state: FSMContext):
+@dp.message(ChallengeState.waiting)
+async def process_challenge(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    has_photo = bool(message.photo)
-    user_text = (message.caption or message.text or "").strip()
+    user_text = (message.text or message.caption or "").strip()
 
-    # Команда во время ожидания ДЗ — выходим из режима, не шлём в AI
-    if not has_photo and user_text.startswith("/"):
+    if user_text.startswith("/"):
         await state.clear()
-        await message.answer("Окей, проверку отменил. Команда ниже 👇", reply_markup=start_kb())
+        await message.answer("Окей, челлендж отложил. Команда ниже 👇", reply_markup=start_kb())
         return
 
-    if not has_photo and not user_text:
+    if not user_text:
         await message.answer(
-            "Пришли <b>картинку</b> или <b>текст</b> работы — и я её проверю 🙌",
-            reply_markup=homework_cancel_kb(),
+            "Пришли <b>текст промпта</b> — и AI его оценит 🙌",
+            reply_markup=challenge_cancel_kb(),
         )
         return
 
+    # Защита: ограничим длину запроса в AI (анти-абуз токенов)
+    user_text = user_text[:1500]
+
     await state.clear()
-    thinking = await message.answer("🤖 Анализирую твою работу… это займёт несколько секунд.")
+    thinking = await message.answer("🤖 AI оценивает твой промпт… пара секунд.")
 
-    image_b64 = None
-    if has_photo:
-        try:
-            file = await bot.get_file(message.photo[-1].file_id)
-            bio = await bot.download_file(file.file_path)
-            image_b64 = base64.b64encode(bio.read()).decode("utf-8")
-        except Exception as e:
-            logging.error(f"HW download error: {e}")
-
-    review = await ai_review(user_text, image_b64)
+    review = await ai_text(
+        CHALLENGE_SYSTEM,
+        f"Тема дня: {challenge_theme()}\n\nПромпт ученика:\n{user_text}",
+        max_tokens=250,
+    )
 
     try:
         await thinking.delete()
     except Exception:
         pass
 
+    add_xp(user_id, "challenge")
+    refresh_discount(user_id)
+    new_badge = give_badge(user_id, "challenger")
+    toast = badge_toast("challenger") if new_badge else ""
+    disc = active_discount(user_id)
+    disc_line = f"\n💸 Твоя скидка за прогресс: <b>{disc} ₽</b>" if disc else ""
+
     if not review:
-        # Нет ключа AI или ошибка — мягкий fallback на куратора
+        track("challenge_fallback", user_id)
         await message.answer(
-            "🙌 <b>Работу получил!</b>\n\n"
-            "Сейчас AI-проверка временно недоступна — твою работу\n"
-            f"посмотрит живой куратор. Напиши ему: {MANAGER}\n\n"
-            "А пока держи <b>+40 XP</b> за то, что сделал ДЗ 🏅",
+            "🙌 <b>Промпт принят!</b>\n\n"
+            "AI-оценка сейчас недоступна, но XP уже твой.\n"
+            f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
             reply_markup=start_kb(),
         )
-        add_xp(user_id, "homework")
-        give_badge(user_id, "homework")
-        track("homework_fallback", user_id)
         return
 
-    track("homework_ai", user_id)
-    add_xp(user_id, "homework")
-    new_badge = give_badge(user_id, "homework")
-    toast = badge_toast("homework") if new_badge else ""
-
+    track("challenge_ai", user_id)
     await message.answer(
-        "🤖 <b>РАЗБОР ОТ AI-НАСТАВНИКА</b>\n\n"
+        "🥊 <b>ОЦЕНКА AI</b>\n\n"
         f"{review}\n\n"
         "━━━━━━━━━━━━━━━━\n"
-        "🏅 <b>+40 XP</b> за выполненное ДЗ!" + toast,
+        f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 Проверить ещё работу", callback_data="homework")],
-            [InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile")],
+            [InlineKeyboardButton(text="🎮 Мой прогресс и скидка", callback_data="profile")],
+            [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
         ]),
     )
-    try:
-        name = message.from_user.first_name or "Юзер"
-        await bot.send_message(
-            ADMIN_ID,
-            f"📝 <b>ДЗ проверено AI</b>\n"
-            f"👤 {name} (<code>{user_id}</code>)\n"
-            f"🖼 фото: {'да' if has_photo else 'нет'}"
-        )
-    except Exception:
-        pass
 
 
 # ─── КОМАНДЫ ───────────────────────────────────────────────────────────────────────────
@@ -1396,14 +1645,23 @@ async def cmd_top(message: Message):
     await message.answer(leaderboard_text(), reply_markup=start_kb())
 
 
-@dp.message(Command("dz"))
-async def cmd_dz(message: Message, state: FSMContext):
-    await state.set_state(HomeworkState.waiting)
+@dp.message(Command("challenge"))
+async def cmd_challenge(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    if not rate_ok(user_id, "challenge", 20 * 3600):
+        left_h = max(1, rate_left(user_id, "challenge", 20 * 3600) // 3600)
+        await message.answer(
+            f"🥊 Челлендж дня уже пройден. Возвращайся через ~{left_h} ч 👇",
+            reply_markup=start_kb(),
+        )
+        return
+    await state.set_state(ChallengeState.waiting)
     await message.answer(
-        "🤖 <b>AI-НАСТАВНИК — ПРОВЕРКА ДЗ</b>\n\n"
-        "Пришли картинку или текст своей работы — разберу,\n"
-        "оценю и подскажу, что улучшить. За проверку <b>+40 XP</b> 🏅",
-        reply_markup=homework_cancel_kb(),
+        "🥊 <b>ЧЕЛЛЕНДЖ ДНЯ</b>\n\n"
+        f"📌 <b>Тема:</b> {challenge_theme()}\n\n"
+        "Пришли свой промпт — AI оценит и подскажет, как улучшить. "
+        "За попытку <b>+30 XP</b> 🏅",
+        reply_markup=challenge_cancel_kb(),
     )
 
 
@@ -1437,8 +1695,8 @@ async def cmd_help(message: Message):
         "/start — главное меню\n"
         "/trial — бесплатный доступ\n"
         "/tariffs — тарифы\n"
-        "/profile — твой прогресс, XP и бейджи 🎮\n"
-        "/dz — сдать домашку на проверку AI-наставнику 🤖\n"
+        "/profile — твой прогресс, XP, скидка и бейджи 🎮\n"
+        "/challenge — челлендж дня, оценит AI 🥊\n"
         "/top — рейтинг учеников 🏅\n\n"
         "💬 Менеджер ответит за 5 минут 👇"
     )
