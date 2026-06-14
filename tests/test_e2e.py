@@ -334,12 +334,12 @@ async def t_neuro_xp():
     txts3 = [b.text for row in m.neuro_menu_kb(ADMIN).inline_keyboard for b in row]
     check("neuro: у админа ∞ (без XP)", any("∞" in t for t in txts3))
 
-    valid = {"google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview",
-             "google/gemini-3-pro-image-preview", "openai/gpt-5-image-mini",
-             "openai/gpt-5-image", "openai/gpt-5.4-image-2"}
-    check("neuro: все модели — реальные image-id OpenRouter",
+    valid = set(m.GEN_LABELS)  # все модели должны иметь цену/лейбл для отчёта расходов
+    check("neuro: все модели учтены в расходах/лейблах",
           all(v["model"] in valid for v in m.NEURO_MODELS.values()))
-    check("neuro: есть пресеты формата", set(m.NEURO_FORMATS) == {"sq", "v", "h"})
+    check("neuro: у каждой модели задан XP и modalities",
+          all(v.get("xp") and v.get("mod") for v in m.NEURO_MODELS.values()))
+    check("neuro: есть пресеты формата с aspect", all(len(v) == 3 for v in m.NEURO_FORMATS.values()))
 
 
 async def t_spend():

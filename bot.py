@@ -286,8 +286,16 @@ GEN_COST_USD = {
     "openai/gpt-5-image-mini":               0.05,
     "openai/gpt-5-image":                    0.15,
     "openai/gpt-5.4-image-2":                0.20,
+    "sourceful/riverflow-v2-fast":           0.02,
+    "bytedance-seed/seedream-4.5":           0.04,
+    "black-forest-labs/flux.2-pro":          0.045,
+    "x-ai/grok-imagine-image-quality":       0.06,
 }
-GEN_COST_MEASURED = {"google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview"}
+# Цены по факту OpenRouter (остальные — оценка ≈)
+GEN_COST_MEASURED = {
+    "google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview",
+    "sourceful/riverflow-v2-fast", "bytedance-seed/seedream-4.5",
+}
 GEN_LABELS = {
     "google/gemini-2.5-flash-image":         "Nano Banana (2.5)",
     "google/gemini-3.1-flash-image-preview": "Nano Banana 2 (3.1)",
@@ -295,6 +303,10 @@ GEN_LABELS = {
     "openai/gpt-5-image-mini":               "GPT Image mini",
     "openai/gpt-5-image":                    "GPT Image",
     "openai/gpt-5.4-image-2":                "GPT Image Pro (5.4)",
+    "sourceful/riverflow-v2-fast":           "Riverflow Fast",
+    "bytedance-seed/seedream-4.5":           "Seedream 4.5",
+    "black-forest-labs/flux.2-pro":          "FLUX.2 Pro",
+    "x-ai/grok-imagine-image-quality":       "Grok Imagine",
 }
 
 
@@ -508,8 +520,10 @@ async def ai_generate_image(prompt: str, image_b64: str):
     return None
 
 
-async def ai_generate_one(model: str, prompt: str, image_b64: str):
+async def ai_generate_one(model: str, prompt: str, image_b64: str, modalities=None, image_config=None):
     """Генерация/редактирование фото КОНКРЕТНОЙ моделью (для окна «Нейросети за XP»).
+    modalities: у image-only моделей (FLUX/Seedream/Riverflow) — ["image"].
+    image_config: для моделей с поддержкой (Gemini) — {"aspect_ratio": "9:16"}.
     Возвращает bytes или None (без каскада — пользователь сам выбрал модель)."""
     if not OPENROUTER_KEY:
         return None
@@ -520,7 +534,9 @@ async def ai_generate_one(model: str, prompt: str, image_b64: str):
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
     payload = {"model": model, "messages": [{"role": "user", "content": content}],
-               "modalities": ["image", "text"]}
+               "modalities": modalities or ["image", "text"]}
+    if image_config:
+        payload["image_config"] = image_config
     timeout = aiohttp.ClientTimeout(total=120)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as s:
@@ -785,23 +801,28 @@ SHOP_ITEMS = [
 SHOP_BY_ID = {i[0]: i for i in SHOP_ITEMS}
 
 # ─── НЕЙРОСЕТИ ЗА XP: выбор модели + формата ────────────────────────────────
-# Доступны через OpenRouter chat/completions (image output). xp — цена генерации
-# (ориентир по реальной стоимости, можно менять). model — id модели OpenRouter.
+# Все вызываются через OpenRouter chat/completions с фото на входе (редактирование).
+#   model — id OpenRouter · xp — цена генерации · mod — modalities (у image-only
+#   моделей только ["image"]) · cfg — поддержка image_config (реальный размер; Gemini).
 NEURO_MODELS = {
-    "nb":    {"label": "🍌 Nano Banana",     "model": "google/gemini-2.5-flash-image",         "xp": 40,  "note": "быстро и дёшево"},
-    "nb2":   {"label": "🍌 Nano Banana 2",   "model": "google/gemini-3.1-flash-image-preview", "xp": 70,  "note": "качество выше"},
-    "nbpro": {"label": "👑 Nano Banana Pro",  "model": "google/gemini-3-pro-image-preview",     "xp": 150, "note": "премиум, максимум деталей"},
-    "gpt":   {"label": "🤖 GPT Image",        "model": "openai/gpt-5-image-mini",               "xp": 120, "note": "стиль OpenAI"},
-    "gptpro":{"label": "🤖 GPT Image Pro",    "model": "openai/gpt-5.4-image-2",                "xp": 250, "note": "премиум OpenAI"},
+    "river": {"label": "🌊 Riverflow Fast",  "model": "sourceful/riverflow-v2-fast",           "xp": 25,  "note": "быстро и дёшево",        "mod": ["image"]},
+    "nb":    {"label": "🍌 Nano Banana",      "model": "google/gemini-2.5-flash-image",         "xp": 40,  "note": "баланс цена/качество",    "mod": ["image", "text"], "cfg": True},
+    "seed":  {"label": "🌱 Seedream 4.5",     "model": "bytedance-seed/seedream-4.5",           "xp": 40,  "note": "реализм",                 "mod": ["image"]},
+    "flux":  {"label": "🎨 FLUX.2 Pro",       "model": "black-forest-labs/flux.2-pro",          "xp": 60,  "note": "художественный стиль",    "mod": ["image"]},
+    "gpt":   {"label": "🤖 GPT Image",        "model": "openai/gpt-5-image-mini",               "xp": 60,  "note": "стиль OpenAI",            "mod": ["image", "text"]},
+    "nb2":   {"label": "🍌 Nano Banana 2",    "model": "google/gemini-3.1-flash-image-preview", "xp": 70,  "note": "качество выше",           "mod": ["image", "text"], "cfg": True},
+    "grok":  {"label": "✨ Grok Imagine",     "model": "x-ai/grok-imagine-image-quality",       "xp": 80,  "note": "от xAI",                  "mod": ["image"]},
+    "nbpro": {"label": "👑 Nano Banana Pro",   "model": "google/gemini-3-pro-image-preview",     "xp": 120, "note": "премиум, максимум деталей","mod": ["image", "text"], "cfg": True},
+    "gptpro":{"label": "🤖 GPT Image Pro",    "model": "openai/gpt-5.4-image-2",                "xp": 200, "note": "премиум OpenAI",          "mod": ["image", "text"]},
 }
-NEURO_ORDER = ["nb", "nb2", "nbpro", "gpt", "gptpro"]
-# Модели из рейтинга OpenRouter, которых нет в chat-каталоге (нужен отдельный
-# image-эндпоинт/провайдер) — показываем как «скоро».
-NEURO_SOON = ["🎨 FLUX", "🖼 Stable Diffusion", "✨ Grok Imagine", "🌊 Wan", "🌱 Seedream"]
+NEURO_ORDER = ["river", "nb", "seed", "flux", "gpt", "nb2", "grok", "nbpro", "gptpro"]
+# Нет на OpenRouter — показываем как «скоро».
+NEURO_SOON = ["🖼 Stable Diffusion", "🌀 Wan"]
+# (подпись, текст для промпта, aspect_ratio для image_config)
 NEURO_FORMATS = {
-    "sq": ("1:1 квадрат", "square 1:1 aspect ratio"),
-    "v":  ("9:16 вертикаль", "vertical 9:16 aspect ratio, portrait orientation"),
-    "h":  ("16:9 горизонталь", "horizontal 16:9 aspect ratio, landscape orientation"),
+    "sq": ("1:1 квадрат", "square 1:1 aspect ratio", "1:1"),
+    "v":  ("9:16 вертикаль", "vertical 9:16 aspect ratio, portrait orientation", "9:16"),
+    "h":  ("16:9 горизонталь", "horizontal 16:9 aspect ratio, landscape orientation", "16:9"),
 }
 
 
@@ -3273,7 +3294,9 @@ async def neuro_wish(message: Message, state: FSMContext):
     if image_b64 and rate_ok(user_id, "neuro_run", 8):
         eng = await ai_text(WOW_PROMPT_SYSTEM, wish, max_tokens=200) or wish
         prompt = f"{eng}. {fmt[1]}."
-        img_bytes = await ai_generate_one(m["model"], prompt, image_b64)
+        img_cfg = {"aspect_ratio": fmt[2]} if m.get("cfg") else None
+        img_bytes = await ai_generate_one(
+            m["model"], prompt, image_b64, modalities=m.get("mod"), image_config=img_cfg)
 
     try:
         await thinking.delete()
@@ -3542,7 +3565,7 @@ async def cmd_paytest(message: Message):
     )
 
 
-async def _img_test_one(model: str, prompt: str, image_b64: str):
+async def _img_test_one(model: str, prompt: str, image_b64: str, modalities=None, image_config=None):
     """Один запрос к конкретной image-модели. Возвращает bytes или None; кидает на HTTP-ошибке."""
     content = [
         {"type": "text", "text": prompt},
@@ -3551,7 +3574,9 @@ async def _img_test_one(model: str, prompt: str, image_b64: str):
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
     payload = {"model": model, "messages": [{"role": "user", "content": content}],
-               "modalities": ["image", "text"]}
+               "modalities": modalities or ["image", "text"]}
+    if image_config:
+        payload["image_config"] = image_config
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as s:
         async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
@@ -3581,25 +3606,28 @@ async def cmd_imgtest(message: Message):
         b64 = base64.b64encode(f.read()).decode()
     prompt = ("Clean professional business headshot, soft neutral studio background, "
               "keep the face identical to the photo.")
-    await message.answer("🧪 Тестирую все image-модели по очереди… ~30 с каждая.")
+    await message.answer("🧪 Тестирую все нейросети из окна «За XP»… ~30 с каждая.")
     lines = []
-    for model in AI_IMAGE_MODELS:
+    for key in NEURO_ORDER:
+        m = NEURO_MODELS[key]
+        model = m["model"]
+        cfg = {"aspect_ratio": "1:1"} if m.get("cfg") else None
         t = now_ts()
         try:
-            img = await _img_test_one(model, prompt, b64)
+            img = await _img_test_one(model, prompt, b64, modalities=m.get("mod"), image_config=cfg)
             dt = now_ts() - t
             if img:
-                lines.append(f"✅ <code>{model}</code> — {len(img) // 1024} KB, {dt:.0f}с")
+                lines.append(f"✅ {m['label']} <code>{model}</code> — {len(img) // 1024} KB, {dt:.0f}с")
                 try:
                     await message.answer_photo(
                         BufferedInputFile(img, filename=f"{model.split('/')[-1]}.png"),
-                        caption=model)
+                        caption=f"{m['label']} · {model}")
                 except Exception:
                     pass
             else:
-                lines.append(f"⚠️ <code>{model}</code> — без картинки, {dt:.0f}с")
+                lines.append(f"⚠️ {m['label']} <code>{model}</code> — без картинки, {dt:.0f}с")
         except Exception as e:
-            lines.append(f"❌ <code>{model}</code> — {str(e)[:70]}")
+            lines.append(f"❌ {m['label']} <code>{model}</code> — {str(e)[:60]}")
     await message.answer("🧪 <b>Итог:</b>\n" + "\n".join(lines))
 
 
