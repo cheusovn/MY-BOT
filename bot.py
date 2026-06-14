@@ -297,7 +297,7 @@ BADGES = {
 XP_RULES = {
     "day1": 10, "day2": 15, "tariffs": 5,
     "free_gift": 5, "referral": 10, "daily": 5, "buy": 0,
-    "challenge": 10, "wow": 5,
+    "challenge": 10, "wow": 5, "ref_join": 10,
 }
 
 # ─── СКИДКА ЗА ПРОГРЕСС (механика №6): чем больше XP — тем больше личная скидка ──────────────────
@@ -1209,6 +1209,26 @@ async def cmd_start(message: Message, state: FSMContext):
         # Сброс флага реактивации — чтобы при новой паузе снова смогли напомнить
         users[user_id].pop("fu_reengage", None)
         save_users()
+
+    # Реферал: новый друг впервые открыл бота по чьей-то ссылке (?start=ref<КОД>) →
+    # пригласившему +10 XP и уведомление. Кредитуем только новых пользователей и
+    # не себе — чтобы нельзя было фармить повторными заходами.
+    if is_new and payload.startswith("ref"):
+        ref_code = payload[3:]
+        owner = promos.get(ref_code)
+        if owner and owner != user_id:
+            users[user_id]["ref_by"] = owner
+            save_users()
+            add_xp(owner, "ref_join")
+            try:
+                await bot.send_message(
+                    int(owner),
+                    "🎉 <b>+10 XP — по твоей ссылке зашёл новый друг!</b>\n\n"
+                    "Чем больше друзей перейдут, тем больше у тебя XP,\n"
+                    "а значит — скидок и бонусов. Спасибо! 💚",
+                )
+            except Exception:
+                pass
 
     text = (
         f"👋 <b>{name}, рад видеть!</b>\n\n"
@@ -2288,7 +2308,8 @@ async def cb_referral(call: CallbackQuery):
     text = (
         "💸 <b>ПАРТНЁРСКАЯ ПРОГРАММА</b>\n\n"
         "🎁 Ты получаешь <b>30% на карту</b> с каждой оплаты\n"
-        "🎁 Друг получает <b>скидку 500 ₽</b>\n\n"
+        "🎁 Друг получает <b>скидку 500 ₽</b>\n"
+        "🎮 <b>+10 XP</b> сразу, как только друг откроет твою ссылку\n\n"
         f"🎫 <b>Твой промокод:</b> <code>{code}</code>\n"
         f"🔗 <b>Твоя ссылка:</b> {invite_link}\n\n"
         "━━━━━━━━━━━━━━━━\n"
