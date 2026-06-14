@@ -296,7 +296,7 @@ BADGES = {
 
 XP_RULES = {
     "day1": 10, "day2": 15, "tariffs": 5,
-    "free_gift": 5, "referral": 10, "daily": 5, "buy": 100,
+    "free_gift": 5, "referral": 10, "daily": 5, "buy": 0,
     "challenge": 10, "wow": 5,
 }
 
