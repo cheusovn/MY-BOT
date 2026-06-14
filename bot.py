@@ -3673,6 +3673,7 @@ async def _img_test_one(model: str, prompt: str, image_b64: str, modalities=None
             for im in (data["choices"][0]["message"].get("images") or []):
                 url = (im.get("image_url") or {}).get("url", "")
                 if url.startswith("data:"):
+                    record_gen(model)  # /imgtest тоже тратит деньги — учитываем в расходах
                     return base64.b64decode(url.split(",", 1)[1])
     return None
 
