@@ -10,7 +10,7 @@ import uuid
 import aiohttp
 from urllib.parse import quote
 from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
     BufferedInputFile, LabeledPrice, PreCheckoutQuery,
@@ -98,6 +98,49 @@ bot = Bot(
     default=DefaultBotProperties(parse_mode="HTML")
 )
 dp = Dispatcher(storage=MemoryStorage())
+
+
+# ─── Анти-дабл-тап на кнопках ───────────────────────────────────────────────
+# При лаге Telegram копит нажатия и потом выполняет колбэки пачкой → открывалось
+# по 3-4 экрана. Гасим: повтор той же кнопки в окне DEBOUNCE и параллельные
+# нажатия от одного юзера игнорируем (только подтверждаем callback, чтобы убрать «часики»).
+_CB_DEBOUNCE = 2.5          # сек: окно подавления повторов одной и той же кнопки
+_cb_last: dict = {}         # (uid, data) -> ts последнего принятого нажатия
+_cb_inflight: set = set()   # uid, у которых колбэк сейчас обрабатывается
+
+
+class AntiDoubleTap(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        uid = event.from_user.id if event.from_user else 0
+        now = time.time()
+        key = (uid, event.data)
+        # 1) тот же колбэк недавно уже приняли — это дабл/тройной тап
+        if now - _cb_last.get(key, 0) < _CB_DEBOUNCE:
+            try:
+                await event.answer()
+            except Exception:
+                pass
+            return
+        # 2) для этого юзера колбэк уже в обработке — параллельные дропаем
+        if uid in _cb_inflight:
+            try:
+                await event.answer()
+            except Exception:
+                pass
+            return
+        _cb_last[key] = now
+        if len(_cb_last) > 4000:          # лёгкая чистка, чтобы не рос бесконечно
+            cutoff = now - 60
+            for k in [k for k, t in _cb_last.items() if t < cutoff]:
+                _cb_last.pop(k, None)
+        _cb_inflight.add(uid)
+        try:
+            return await handler(event, data)
+        finally:
+            _cb_inflight.discard(uid)
+
+
+dp.callback_query.middleware(AntiDoubleTap())
 
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 PROMO_FILE = os.path.join(DATA_DIR, "promo.json")
