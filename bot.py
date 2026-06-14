@@ -3269,8 +3269,8 @@ async def cb_neuro_model(call: CallbackQuery):
     if not is_admin(user_id) and xp < m["xp"]:
         await call.answer(f"Не хватает XP: нужно {m['xp']}, у тебя {xp}. Заработай в челлендже 🥊", show_alert=True)
         return
-    rows = [[InlineKeyboardButton(text=label, callback_data=f"ng_{key}_{fkey}")]
-            for fkey, (label, _) in NEURO_FORMATS.items()]
+    rows = [[InlineKeyboardButton(text=fmt[0], callback_data=f"ng_{key}_{fkey}")]
+            for fkey, fmt in NEURO_FORMATS.items()]
     rows.append([InlineKeyboardButton(text="← Назад к нейросетям", callback_data="neuro")])
     await show(
         call,

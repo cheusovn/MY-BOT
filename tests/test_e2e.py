@@ -341,6 +341,16 @@ async def t_neuro_xp():
           all(v.get("xp") and v.get("mod") for v in m.NEURO_MODELS.values()))
     check("neuro: есть пресеты формата с aspect", all(len(v) == 3 for v in m.NEURO_FORMATS.values()))
 
+    # регрессия: открытие подменю формата и выбор не должны падать (NEURO_FORMATS — 3-tuple)
+    ok = True
+    try:
+        m._ensure_game(uid)["xp"] = 1000
+        await m.cb_neuro_model(Call("nm_nb", uid))
+        await m.cb_neuro_go(Call("ng_nb_v", uid), State())
+    except Exception:
+        ok = False
+    check("neuro: подменю формата и выбор открываются без ошибок", ok)
+
 
 async def t_spend():
     reset_state()
