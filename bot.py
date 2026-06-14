@@ -295,9 +295,9 @@ BADGES = {
 }
 
 XP_RULES = {
-    "day1": 30, "day2": 50, "tariffs": 20,
-    "free_gift": 15, "referral": 25, "daily": 10, "buy": 100,
-    "challenge": 30, "wow": 20,
+    "day1": 10, "day2": 15, "tariffs": 5,
+    "free_gift": 5, "referral": 10, "daily": 5, "buy": 100,
+    "challenge": 10, "wow": 5,
 }
 
 # ─── СКИДКА ЗА ПРОГРЕСС (механика №6): чем больше XP — тем больше личная скидка ──────────────────
@@ -394,7 +394,6 @@ _img_env = os.environ.get("OPENROUTER_IMAGE_MODEL", "").strip()
 AI_IMAGE_MODELS = ([_img_env] if _img_env else []) + [
     "google/gemini-2.5-flash-image",          # основной: стабильно отдаёт картинку на редактировании фото
     "google/gemini-3.1-flash-image-preview",  # запасной
-    "google/gemini-2.5-flash-image-preview",
 ]
 
 # Системка для превращения «желания» юзера в качественный промпт для image-модели.
@@ -1007,13 +1006,13 @@ def start_kb(uid: str = None):
         [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
         [
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
-            InlineKeyboardButton(text="🏆 Истории", callback_data="results"),
+            InlineKeyboardButton(text="🏆 Отзывы", callback_data="results"),
         ],
         [
             InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
             InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
         ],
-        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
         [
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
@@ -1301,7 +1300,7 @@ async def cb_day1(call: CallbackQuery):
     bonus = badge_toast("first_step") if new_badge else ""
 
     text = (
-        "🎓 <b>День 1 — первые гиперреалистичные фото</b>  <i>(+30 XP)</i>\n"
+        "🎓 <b>День 1 — первые гиперреалистичные фото</b>  <i>(+10 XP)</i>\n"
         "█░░ 33%\n\n"
         "Никакой скучной теории — сразу практика.\n\n"
         "<b>За ближайший час ты:</b>\n"
@@ -1346,7 +1345,7 @@ async def cb_day2(call: CallbackQuery):
             "А пока можно не скучать 👇",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✨ Оживить своё фото (бесплатно)", callback_data="wow")],
-                [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
+                [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
                 [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
             ]),
@@ -1360,7 +1359,7 @@ async def cb_day2(call: CallbackQuery):
     bonus = badge_toast("day1_done") if new_badge else ""
 
     text = (
-        "🔥 <b>День 2 — промпты и GPT Image 2</b>  <i>(+50 XP)</i>\n"
+        "🔥 <b>День 2 — промпты и GPT Image 2</b>  <i>(+15 XP)</i>\n"
         "██░ 66%\n\n"
         "Первый день позади! Сегодня — самое полезное:\n"
         "как писать промпты, чтобы нейросеть выдавала\n"
@@ -1603,7 +1602,7 @@ async def cb_tariffs(call: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "results")
 async def cb_results(call: CallbackQuery):
     text = (
-        "🏆 <b>Истории учеников</b>\n\n"
+        "🏆 <b>Отзывы учеников</b>\n\n"
         f"За полгода через академию прошли <b>{STUDENTS_COUNT}+ человек.</b>\n\n"
         "━━━━━━━━━━━━━━━━\n"
         "💬 <b>Марина, фрилансер → вышла на 60k/мес:</b>\n"
@@ -2315,7 +2314,7 @@ async def cb_profile(call: CallbackQuery):
     if new_badge:
         text += badge_toast(new_badge)
     await show(call, text, InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
         [InlineKeyboardButton(text="🎓 Пройти урок (+XP)", callback_data="day1")],
         [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
@@ -2342,7 +2341,7 @@ async def cb_leaderboard(call: CallbackQuery):
         rank_line = "\n\n📍 Ты ещё не в рейтинге — пройди челлендж дня, чтобы попасть в таблицу!"
 
     await show(call, leaderboard_text() + rank_line, InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🥊 Челлендж дня (+30 XP)", callback_data="challenge")],
+        [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
         [InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
@@ -2607,7 +2606,7 @@ async def wow_wish(message: Message, state: FSMContext):
                 "Ну как, проще, чем казалось? 🙂\n\n"
                 "А это сделала всего одна нейросеть. Их целый\n"
                 "набор: видео, музыка, тексты, дизайн.\n\n"
-                "🏅 +20 XP\n\n"
+                "🏅 +5 XP\n\n"
                 "👇 Посмотреть весь набор:"
             ),
             reply_markup=wow_sell_kb(),
@@ -2898,7 +2897,7 @@ async def cb_challenge(call: CallbackQuery, state: FSMContext):
         "Напиши свой запрос (промпт) для нейросети на эту\n"
         "тему — одним сообщением. Я оценю по 10-балльной\n"
         "шкале и подскажу, что улучшить.\n\n"
-        "🏅 За попытку — +30 XP и рост личной скидки.\n\n"
+        "🏅 За попытку — +10 XP и рост личной скидки.\n\n"
         "👇 Жду твой промпт:"
     )
     await show(call, text, challenge_cancel_kb())
@@ -2956,7 +2955,7 @@ async def process_challenge(message: Message, state: FSMContext):
         await message.answer(
             "🙌 <b>Промпт принят!</b>\n\n"
             "Разбор сейчас недоступен, но XP уже твой.\n"
-            f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
+            f"🏅 <b>+10 XP</b> за челлендж дня!{disc_line}{toast}",
             reply_markup=start_kb(),
         )
         return
@@ -2966,7 +2965,7 @@ async def process_challenge(message: Message, state: FSMContext):
         "🥊 <b>Разбор твоего промпта</b>\n\n"
         f"{review}\n\n"
         "━━━━━━━━━━━━━━━━\n"
-        f"🏅 <b>+30 XP</b> за челлендж дня!{disc_line}{toast}",
+        f"🏅 <b>+10 XP</b> за челлендж дня!{disc_line}{toast}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎮 Мой прогресс и скидка", callback_data="profile")],
             [InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard")],
@@ -3005,7 +3004,7 @@ async def cmd_challenge(message: Message, state: FSMContext):
         "🥊 <b>ЧЕЛЛЕНДЖ ДНЯ</b>\n\n"
         f"📌 <b>Тема:</b> {challenge_theme()}\n\n"
         "Пришли свой промпт — дам оценку и подскажу, как улучшить. "
-        "За попытку <b>+30 XP</b> 🏅",
+        "За попытку <b>+10 XP</b> 🏅",
         reply_markup=challenge_cancel_kb(),
     )
 
@@ -3562,7 +3561,7 @@ async def follow_up_scheduler():
                     await _fu_send(uid,
                         "🥊 <b>Тебя ждёт новый челлендж дня!</b>\n\n"
                         f"Тема: {challenge_theme()}\n"
-                        "Пройди за минуту — получишь +30 XP, а на XP\n"
+                        "Пройди за минуту — получишь +10 XP, а на XP\n"
                         "в магазине берутся бесплатные генерации и скидки 👇",
                         InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="🥊 Челлендж дня", callback_data="challenge")],

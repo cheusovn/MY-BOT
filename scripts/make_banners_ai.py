@@ -38,7 +38,6 @@ MODELS = [
     os.environ.get("OPENROUTER_IMAGE_MODEL", "").strip(),
     "google/gemini-3.1-flash-image-preview",
     "google/gemini-2.5-flash-image",
-    "google/gemini-2.5-flash-image-preview",
 ]
 MODELS = [m for m in MODELS if m]
 
