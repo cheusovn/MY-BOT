@@ -142,6 +142,33 @@ class AntiDoubleTap(BaseMiddleware):
 
 dp.callback_query.middleware(AntiDoubleTap())
 
+# ─── Анти-повтор тяжёлых операций (генерация, /imgtest) ─────────────────────
+# Команда/сообщение, запускающее долгую AI-операцию, не должно стартовать второй
+# раз, пока первая ещё идёт (при лаге юзер жмёт 2-3 раза → генерировалось 4 раза).
+_busy_users: set = set()
+
+
+def single_flight(fn):
+    """Декоратор для message-хендлеров: один тяжёлый запрос на пользователя за раз."""
+    async def wrapper(message, *a, **k):
+        uid = message.from_user.id if message.from_user else 0
+        if uid in _busy_users:
+            try:
+                await message.answer("⏳ Уже выполняю предыдущий запрос — дождись результата 🙂")
+            except Exception:
+                pass
+            return
+        _busy_users.add(uid)
+        try:
+            return await fn(message, *a, **k)
+        finally:
+            _busy_users.discard(uid)
+    wrapper.__wrapped__ = fn
+    wrapper.__name__ = getattr(fn, "__name__", "wrapper")
+    wrapper.__doc__ = getattr(fn, "__doc__", None)
+    return wrapper
+
+
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 PROMO_FILE = os.path.join(DATA_DIR, "promo.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
@@ -2850,6 +2877,7 @@ async def wow_photo(message: Message, state: FSMContext):
 
 # Шаг 2: получили желание — генерируем картинку и продаём
 @dp.message(WowState.waiting_wish)
+@single_flight
 async def wow_wish(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     wish = (message.text or message.caption or "").strip()
@@ -3092,6 +3120,7 @@ async def gen_photo(message: Message, state: FSMContext):
 
 
 @dp.message(GenState.waiting_wish)
+@single_flight
 async def gen_wish(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     wish = (message.text or message.caption or "").strip()
@@ -3296,6 +3325,7 @@ async def neuro_photo(message: Message, state: FSMContext):
 
 
 @dp.message(NeuroState.waiting_wish)
+@single_flight
 async def neuro_wish(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     wish = (message.text or message.caption or "").strip()
@@ -3428,6 +3458,7 @@ async def cb_ch_cancel(call: CallbackQuery, state: FSMContext):
 
 
 @dp.message(ChallengeState.waiting)
+@single_flight
 async def process_challenge(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     user_text = (message.text or message.caption or "").strip()
@@ -3634,6 +3665,7 @@ async def _img_test_one(model: str, prompt: str, image_b64: str, modalities=None
 
 
 @dp.message(Command("imgtest"))
+@single_flight
 async def cmd_imgtest(message: Message):
     """Только админ: прогоняет ВСЕ image-модели на тестовом фото и шлёт результат."""
     if message.from_user.id != ADMIN_ID:

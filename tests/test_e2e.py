@@ -354,12 +354,34 @@ async def t_spend():
     check("spend: курс 100 ₽/$ учтён", "1 $ = 100 ₽" in txt)
 
 
+async def t_single_flight():
+    m._busy_users.clear()
+    ran = []
+
+    @m.single_flight
+    async def slow(message):
+        ran.append(1)
+
+    msg = Msg("6001")
+    await slow(msg)
+    check("busy: первый запуск выполняется", ran == [1])
+
+    m._busy_users.add(6001)             # эмулируем «занят»
+    await slow(msg)
+    check("busy: повтор во время занятости заблокирован", ran == [1])
+    check("busy: юзеру показано «подожди»",
+          any("Уже выполняю" in str(s) for s in msg.sent))
+    m._busy_users.discard(6001)
+    await slow(msg)
+    check("busy: после освобождения снова работает", ran == [1, 1])
+
+
 async def main():
     m.bot = DummyBot()  # подменяем сетевой бот заглушкой
     print("─── E2E прогон воронки бота ───")
     for fn in [t_onboarding, t_day_gate_normal, t_admin_bypass, t_course_paid_flow,
                t_day8_paywall, t_payment_security, t_pre_checkout, t_pricing, t_referral_cash,
-               t_neuro_xp, t_spend]:
+               t_neuro_xp, t_spend, t_single_flight]:
         try:
             await fn()
         except Exception as e:
