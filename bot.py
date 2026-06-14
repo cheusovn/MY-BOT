@@ -276,6 +276,64 @@ def track(event: str, uid: str = "", extra: str = ""):
         pass
 
 
+# ─── УЧЁТ РАСХОДОВ НА ГЕНЕРАЦИЮ (OpenRouter) ────────────────────────────────────────────────────────
+USD_RUB = 100  # курс для подсчёта расходов в ₽ (1 $ = 100 ₽)
+# Цена за 1 картинку, $. Измерено по Activity: 2.5 и 3.1. Остальные — оценка (≈).
+GEN_COST_USD = {
+    "google/gemini-2.5-flash-image":         0.039,
+    "google/gemini-3.1-flash-image-preview": 0.068,
+    "google/gemini-3-pro-image-preview":     0.12,
+    "openai/gpt-5-image-mini":               0.05,
+    "openai/gpt-5-image":                    0.15,
+    "openai/gpt-5.4-image-2":                0.20,
+}
+GEN_COST_MEASURED = {"google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview"}
+GEN_LABELS = {
+    "google/gemini-2.5-flash-image":         "Nano Banana (2.5)",
+    "google/gemini-3.1-flash-image-preview": "Nano Banana 2 (3.1)",
+    "google/gemini-3-pro-image-preview":     "Nano Banana Pro",
+    "openai/gpt-5-image-mini":               "GPT Image mini",
+    "openai/gpt-5-image":                    "GPT Image",
+    "openai/gpt-5.4-image-2":                "GPT Image Pro (5.4)",
+}
+
+
+def record_gen(model_id: str):
+    """Считает успешные генерации по модели (для раздела «Расходы» в админке)."""
+    try:
+        gc = events_log.setdefault("gen_counts", {})
+        gc[model_id] = gc.get(model_id, 0) + 1
+        _mark_dirty("events")
+    except Exception:
+        pass
+
+
+def build_spend_text() -> str:
+    gc = events_log.get("gen_counts", {})
+    lines, total_usd = [], 0.0
+    for mid, label in GEN_LABELS.items():
+        n = gc.get(mid, 0)
+        unit = GEN_COST_USD.get(mid, 0.0)
+        sub = n * unit
+        total_usd += sub
+        mark = "" if mid in GEN_COST_MEASURED else "≈"
+        lines.append(
+            f"• {label}: <b>{n}</b> × {mark}${unit:.3f} = ${sub:.2f} ({sub * USD_RUB:.0f} ₽)"
+        )
+    # неизвестные модели, если вдруг появятся
+    for mid, n in gc.items():
+        if mid not in GEN_LABELS:
+            lines.append(f"• {mid}: <b>{n}</b> (цена неизв.)")
+    total_n = sum(gc.values())
+    return (
+        f"💸 <b>Расходы на генерацию</b>\n"
+        f"<i>Курс: 1 $ = {USD_RUB} ₽ · ≈ — оценка, без ≈ — по факту OpenRouter</i>\n\n"
+        f"{chr(10).join(lines) if lines else '— генераций пока не было'}\n\n"
+        f"🖼 Всего генераций: <b>{total_n}</b>\n"
+        f"💰 <b>Итого: ${total_usd:.2f} ≈ {total_usd * USD_RUB:.0f} ₽</b>"
+    )
+
+
 # ─── ГЕЙМИФИКАЦИЯ: XP, уровни, стрики, бейджи, квесты ──────────────────────────────────────────────
 LEVELS = [
     (0,    "🥉 Новичок"),
@@ -440,12 +498,45 @@ async def ai_generate_image(prompt: str, image_b64: str):
                         url = (im.get("image_url") or {}).get("url", "")
                         if url.startswith("data:"):
                             logging.info(f"image OK via OpenRouter:{model}")
+                            record_gen(model)
                             return base64.b64decode(url.split(",", 1)[1])
                     logging.warning(f"image model {model} returned no images → next")
         except Exception as e:
             logging.warning(f"ai_generate_image {model} failed: {e} → next")
             continue
     logging.error("ai_generate_image: all image models exhausted")
+    return None
+
+
+async def ai_generate_one(model: str, prompt: str, image_b64: str):
+    """Генерация/редактирование фото КОНКРЕТНОЙ моделью (для окна «Нейросети за XP»).
+    Возвращает bytes или None (без каскада — пользователь сам выбрал модель)."""
+    if not OPENROUTER_KEY:
+        return None
+    content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+    ]
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    headers.update(OPENROUTER_EXTRA)
+    payload = {"model": model, "messages": [{"role": "user", "content": content}],
+               "modalities": ["image", "text"]}
+    timeout = aiohttp.ClientTimeout(total=120)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
+                data = await r.json()
+                if r.status != 200:
+                    logging.warning(f"ai_generate_one {model} HTTP {r.status}: {str(data)[:120]}")
+                    return None
+                for im in (data["choices"][0]["message"].get("images") or []):
+                    url = (im.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        logging.info(f"image OK via OpenRouter:{model}")
+                        record_gen(model)
+                        return base64.b64decode(url.split(",", 1)[1])
+    except Exception as e:
+        logging.warning(f"ai_generate_one {model} failed: {e}")
     return None
 
 
@@ -692,6 +783,26 @@ SHOP_ITEMS = [
     ("disc2000", "💸 Скидка 2 000 ₽ на курс", 500, "disc", 2000),
 ]
 SHOP_BY_ID = {i[0]: i for i in SHOP_ITEMS}
+
+# ─── НЕЙРОСЕТИ ЗА XP: выбор модели + формата ────────────────────────────────
+# Доступны через OpenRouter chat/completions (image output). xp — цена генерации
+# (ориентир по реальной стоимости, можно менять). model — id модели OpenRouter.
+NEURO_MODELS = {
+    "nb":    {"label": "🍌 Nano Banana",     "model": "google/gemini-2.5-flash-image",         "xp": 40,  "note": "быстро и дёшево"},
+    "nb2":   {"label": "🍌 Nano Banana 2",   "model": "google/gemini-3.1-flash-image-preview", "xp": 70,  "note": "качество выше"},
+    "nbpro": {"label": "👑 Nano Banana Pro",  "model": "google/gemini-3-pro-image-preview",     "xp": 150, "note": "премиум, максимум деталей"},
+    "gpt":   {"label": "🤖 GPT Image",        "model": "openai/gpt-5-image-mini",               "xp": 120, "note": "стиль OpenAI"},
+    "gptpro":{"label": "🤖 GPT Image Pro",    "model": "openai/gpt-5.4-image-2",                "xp": 250, "note": "премиум OpenAI"},
+}
+NEURO_ORDER = ["nb", "nb2", "nbpro", "gpt", "gptpro"]
+# Модели из рейтинга OpenRouter, которых нет в chat-каталоге (нужен отдельный
+# image-эндпоинт/провайдер) — показываем как «скоро».
+NEURO_SOON = ["🎨 FLUX", "🖼 Stable Diffusion", "✨ Grok Imagine", "🌊 Wan", "🌱 Seedream"]
+NEURO_FORMATS = {
+    "sq": ("1:1 квадрат", "square 1:1 aspect ratio"),
+    "v":  ("9:16 вертикаль", "vertical 9:16 aspect ratio, portrait orientation"),
+    "h":  ("16:9 горизонталь", "horizontal 16:9 aspect ratio, landscape orientation"),
+}
 
 
 def spend_xp(uid: str, cost: int) -> bool:
@@ -989,6 +1100,11 @@ class GenState(StatesGroup):
     waiting_wish = State()
 
 
+class NeuroState(StatesGroup):
+    waiting_photo = State()
+    waiting_wish = State()
+
+
 class PayState(StatesGroup):
     waiting_email = State()  # ввод email для чека перед оплатой через API ЮKassa
 
@@ -1022,6 +1138,7 @@ def start_kb(uid: str = None):
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
+        [InlineKeyboardButton(text="🧠 Нейросети за XP — генерируй фото", callback_data="neuro")],
         [InlineKeyboardButton(text="🛒 Магазин: обменять опыт на бонусы", callback_data="shop")],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
@@ -2994,6 +3111,211 @@ async def gen_wish(message: Message, state: FSMContext):
     track("gen_done", user_id)
 
 
+# ─── НЕЙРОСЕТИ ЗА XP: выбор модели → формат → фото → генерация ───────────────────────────────────────
+
+def neuro_menu_kb(uid: str):
+    xp = _ensure_game(uid).get("xp", 0)
+    admin = is_admin(uid)
+    rows = []
+    for key in NEURO_ORDER:
+        m = NEURO_MODELS[key]
+        afford = admin or xp >= m["xp"]
+        price = "∞" if admin else f"{m['xp']} XP"
+        lock = "" if afford else "🔒 "
+        rows.append([InlineKeyboardButton(text=f"{lock}{m['label']} — {price}", callback_data=f"nm_{key}")])
+    for soon in NEURO_SOON:
+        rows.append([InlineKeyboardButton(text=f"{soon} — скоро", callback_data="nsoon")])
+    rows.append([InlineKeyboardButton(text="🥊 Заработать XP (челлендж)", callback_data="challenge")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.callback_query(lambda c: c.data == "neuro")
+async def cb_neuro(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    track("neuro_open", user_id)
+    xp = _ensure_game(user_id).get("xp", 0)
+    head = "♾ <b>Режим админа: без XP</b>" if is_admin(user_id) else f"У тебя: <b>{xp} XP</b>"
+    text = (
+        "🧠 <b>НЕЙРОСЕТИ ЗА XP</b>\n\n"
+        f"{head}\n\n"
+        "Выбери нейросеть — превратим твоё фото во что угодно.\n"
+        "Дальше выберешь формат и пришлёшь кадр. 👇\n\n"
+        "💡 XP копится за челлендж дня, уроки, серии и друзей."
+    )
+    await show(call, text, neuro_menu_kb(user_id))
+
+
+@dp.callback_query(lambda c: c.data == "nsoon")
+async def cb_neuro_soon(call: CallbackQuery):
+    await call.answer("Эта нейросеть скоро появится 🙂 Сейчас доступны Nano Banana и GPT Image.", show_alert=True)
+
+
+@dp.callback_query(lambda c: c.data.startswith("nm_"))
+async def cb_neuro_model(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    key = call.data.replace("nm_", "")
+    m = NEURO_MODELS.get(key)
+    if not m:
+        await call.answer()
+        return
+    xp = _ensure_game(user_id).get("xp", 0)
+    if not is_admin(user_id) and xp < m["xp"]:
+        await call.answer(f"Не хватает XP: нужно {m['xp']}, у тебя {xp}. Заработай в челлендже 🥊", show_alert=True)
+        return
+    rows = [[InlineKeyboardButton(text=label, callback_data=f"ng_{key}_{fkey}")]
+            for fkey, (label, _) in NEURO_FORMATS.items()]
+    rows.append([InlineKeyboardButton(text="← Назад к нейросетям", callback_data="neuro")])
+    await show(
+        call,
+        f"{m['label']} — <i>{m['note']}</i>\n"
+        f"Цена: <b>{'∞ (админ)' if is_admin(user_id) else str(m['xp']) + ' XP'}</b>\n\n"
+        "Выбери формат картинки 👇",
+        InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("ng_"))
+async def cb_neuro_go(call: CallbackQuery, state: FSMContext):
+    user_id = str(call.from_user.id)
+    _, key, fkey = call.data.split("_", 2)
+    m = NEURO_MODELS.get(key)
+    fmt = NEURO_FORMATS.get(fkey)
+    if not m or not fmt:
+        await call.answer()
+        return
+    if not is_admin(user_id) and _ensure_game(user_id).get("xp", 0) < m["xp"]:
+        await call.answer("Не хватает XP 🙂", show_alert=True)
+        return
+    await state.set_state(NeuroState.waiting_photo)
+    await state.update_data(neuro_key=key, neuro_fmt=fkey)
+    await show(
+        call,
+        f"{m['label']} · {fmt[0]}\n\n"
+        "📸 Пришли фото — и опиши, что с ним сделать.\n\n"
+        "👇 Жду фото:",
+        InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data="neuro_cancel")],
+        ]),
+    )
+
+
+@dp.callback_query(lambda c: c.data == "neuro_cancel")
+async def cb_neuro_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show(call, "Окей, отложили 🙂", start_kb())
+
+
+@dp.message(NeuroState.waiting_photo)
+async def neuro_photo(message: Message, state: FSMContext):
+    text = (message.caption or message.text or "").strip()
+    if not message.photo and text.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
+        return
+    if not message.photo:
+        await message.answer("Пришли именно <b>фото</b> 🙌 (картинкой, не файлом)")
+        return
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > 5 * 1024 * 1024:
+        await message.answer("Фото великовато 😅 До 5 МБ, пожалуйста.")
+        return
+    await state.update_data(photo_id=photo.file_id)
+    await state.set_state(NeuroState.waiting_wish)
+    await message.answer(
+        "🔥 Фото получил! Что с ним сделать?\n\n"
+        "Например: <i>«сделай меня супергероем»</i>, "
+        "<i>«Pixar-стиль»</i>, <i>«деловой портрет»</i>, "
+        "<i>«неоновый фон ночного города»</i>\n\n"
+        "👇 Опиши:"
+    )
+
+
+@dp.message(NeuroState.waiting_wish)
+async def neuro_wish(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    wish = (message.text or message.caption or "").strip()
+    if wish.startswith("/"):
+        await state.clear()
+        await message.answer("Окей, отложили. Команда ниже 👇", reply_markup=start_kb())
+        return
+    if not wish:
+        await message.answer("Опиши словами, что сделать с фото 🙌")
+        return
+    data = await state.get_data()
+    key = data.get("neuro_key")
+    fkey = data.get("neuro_fmt")
+    photo_id = data.get("photo_id")
+    await state.clear()
+    m = NEURO_MODELS.get(key)
+    fmt = NEURO_FORMATS.get(fkey)
+    if not (m and fmt and photo_id):
+        await message.answer("Что-то потерялось 🙈 Начни заново 🧠", reply_markup=start_kb())
+        return
+
+    admin = is_admin(user_id)
+    if not admin and _ensure_game(user_id).get("xp", 0) < m["xp"]:
+        await message.answer("Не хватает XP 🙂 Заработай в челлендже 🥊", reply_markup=start_kb())
+        return
+
+    wish = wish[:300]
+    thinking = await message.answer(f"{m['label']} рисует… ~30–60 секунд.")
+
+    image_b64 = None
+    try:
+        f = await bot.get_file(photo_id)
+        bio = await bot.download_file(f.file_path)
+        image_b64 = base64.b64encode(bio.read()).decode("utf-8")
+    except Exception as e:
+        logging.error(f"neuro download error: {e}")
+
+    img_bytes = None
+    if image_b64 and rate_ok(user_id, "neuro_run", 8):
+        eng = await ai_text(WOW_PROMPT_SYSTEM, wish, max_tokens=200) or wish
+        prompt = f"{eng}. {fmt[1]}."
+        img_bytes = await ai_generate_one(m["model"], prompt, image_b64)
+
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+
+    if not img_bytes:
+        await message.answer(
+            f"😔 <b>{m['label']}</b> сейчас не ответила — XP <b>не списан</b>.\n"
+            "Попробуй ещё раз или выбери другую нейросеть 🧠",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🧠 К нейросетям", callback_data="neuro")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+        track("neuro_fail", user_id, key)
+        return
+
+    # XP списываем только после успешной отправки картинки (у админа — бесплатно)
+    try:
+        await message.answer_photo(
+            photo=BufferedInputFile(img_bytes, filename="ai_neuro.png"),
+            caption=(
+                f"🎨 <b>Готово!</b> {m['label']} · {fmt[0]}\n\n"
+                + ("♾ Режим админа — XP не списан.\n" if admin else f"Списано: <b>{m['xp']} XP</b>.\n")
+                + "Хочешь ещё? 👇"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🧠 Ещё нейросеть", callback_data="neuro")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
+    except Exception as e:
+        logging.warning(f"neuro send photo failed: {e}")
+        await message.answer("Картинка готова, но связь подвисла 😅 XP не списан — попробуй ещё раз 🧠", reply_markup=start_kb())
+        return
+
+    if not admin:
+        spend_xp(user_id, m["xp"])
+    track("neuro_done", user_id, key)
+
+
 # ─── МЕХАНИКА №1: ЧЕЛЛЕНДЖ ДНЯ (промпт-дуэль, оценивает AI) ─────────────────────────────────────────
 
 def challenge_cancel_kb():
@@ -3397,6 +3719,7 @@ def admin_kb():
         [InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats")],
         [InlineKeyboardButton(text="💸 Рефералы", callback_data="adm_refs")],
         [InlineKeyboardButton(text="💰 Платежи", callback_data="adm_pays")],
+        [InlineKeyboardButton(text="💸 Расходы на генерацию", callback_data="adm_spend")],
         [InlineKeyboardButton(text="👥 Последние пользователи", callback_data="adm_users")],
         [InlineKeyboardButton(text="📥 Экспорт данных", callback_data="adm_export")],
         [InlineKeyboardButton(text="🧪 Тест оплаты 100 ₽", callback_data="ykapi_test")],
@@ -3456,6 +3779,15 @@ async def cb_adm_pays(call: CallbackQuery):
     await call.message.answer(build_payments_text(), reply_markup=admin_back_kb())
 
 
+@dp.callback_query(lambda c: c.data == "adm_spend")
+async def cb_adm_spend(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(build_spend_text(), reply_markup=admin_back_kb())
+
+
 @dp.callback_query(lambda c: c.data == "adm_users")
 async def cb_adm_users(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -3500,6 +3832,7 @@ async def cb_adm_reset_yes(call: CallbackQuery):
     spots_data.clear()
     events_log.get("counters", {}).clear()
     events_log.get("recent", []).clear()
+    events_log.get("gen_counts", {}).clear()
     _granted_payments.clear()
     # помечаем все файлы на запись (фоновый flusher перезапишет пустыми)
     for key in ("users", "promos", "spots", "events"):

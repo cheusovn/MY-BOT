@@ -113,6 +113,7 @@ def reset_state():
     m.promos.clear()
     m._granted_payments.clear()
     m.events_log.setdefault("counters", {}).clear()
+    m.events_log.setdefault("gen_counts", {}).clear()
 
 
 async def start_user(uid, first="Тест"):
@@ -318,11 +319,47 @@ async def t_referral_cash():
     check("ref: XP вырос на сумму ₽", m._ensure_game(owner).get("xp", 0) == xp0 + 2500 * m.REF_TO_XP_RATE)
 
 
+async def t_neuro_xp():
+    reset_state()
+    uid = "5001"
+    await start_user(uid)
+    kb = m.neuro_menu_kb(uid)
+    txts = [b.text for row in kb.inline_keyboard for b in row]
+    check("neuro: без XP модели заблокированы (🔒)", any("🔒" in t for t in txts))
+
+    m._ensure_game(uid)["xp"] = 1000
+    txts2 = [b.text for row in m.neuro_menu_kb(uid).inline_keyboard for b in row]
+    check("neuro: с XP замок снят", not any("🔒" in t for t in txts2))
+
+    txts3 = [b.text for row in m.neuro_menu_kb(ADMIN).inline_keyboard for b in row]
+    check("neuro: у админа ∞ (без XP)", any("∞" in t for t in txts3))
+
+    valid = {"google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview",
+             "google/gemini-3-pro-image-preview", "openai/gpt-5-image-mini",
+             "openai/gpt-5-image", "openai/gpt-5.4-image-2"}
+    check("neuro: все модели — реальные image-id OpenRouter",
+          all(v["model"] in valid for v in m.NEURO_MODELS.values()))
+    check("neuro: есть пресеты формата", set(m.NEURO_FORMATS) == {"sq", "v", "h"})
+
+
+async def t_spend():
+    reset_state()
+    m.record_gen("google/gemini-2.5-flash-image")
+    m.record_gen("google/gemini-2.5-flash-image")
+    m.record_gen("google/gemini-3.1-flash-image-preview")
+    txt = m.build_spend_text()
+    check("spend: всего генераций = 3", "Всего генераций: <b>3</b>" in txt)
+    # 2×0.039 + 1×0.068 = 0.146 $ → 14.6 ₽
+    check("spend: общий расход посчитан", "Итого: $0.15" in txt)
+    check("spend: курс 100 ₽/$ учтён", "1 $ = 100 ₽" in txt)
+
+
 async def main():
     m.bot = DummyBot()  # подменяем сетевой бот заглушкой
     print("─── E2E прогон воронки бота ───")
     for fn in [t_onboarding, t_day_gate_normal, t_admin_bypass, t_course_paid_flow,
-               t_day8_paywall, t_payment_security, t_pre_checkout, t_pricing, t_referral_cash]:
+               t_day8_paywall, t_payment_security, t_pre_checkout, t_pricing, t_referral_cash,
+               t_neuro_xp, t_spend]:
         try:
             await fn()
         except Exception as e:
