@@ -278,11 +278,51 @@ async def t_pricing():
     check("links: 8 дней курса", all(d in m.COURSE_LINKS for d in range(1, 9)))
 
 
+async def t_referral_cash():
+    reset_state()
+    owner, friend = "4001", "4002"
+    await start_user(owner)
+    await m.cb_referral(Call("referral", owner))
+    code = m.users[owner].get("promo_code")
+    check("ref: промокод создан", bool(code))
+
+    # друг впервые открывает бота по ссылке ?start=ref<code>
+    msg = Msg(friend, text=f"/start ref{code}")
+    msg.from_user = U(friend)
+    await m.cmd_start(msg, State())
+    check("ref: friend.ref_by = owner", m.users[friend].get("ref_by") == owner)
+    check("ref: owner +10 XP за переход друга", m._ensure_game(owner).get("xp", 0) >= 10)
+
+    # друг покупает VIP за 4970 → владельцу 30% = 1491 ₽
+    await m.on_paid(Msg(friend, sp=SP("course_vip", amount_cents=497000)))
+    check("ref: владельцу начислено 30% (1491 ₽)", m.get_ref_cash(owner) == 1491)
+
+    # вывод ниже порога 2000 — заявка админу НЕ уходит
+    m.bot.calls.clear()
+    await m.cb_ref_withdraw(Call("ref_withdraw", owner))
+    check("ref: вывод <2000 не создаёт заявку",
+          not any("ЗАЯВКА НА ВЫВОД" in str(c) for c in m.bot.calls))
+
+    # порог достигнут — заявка уходит админу
+    m.users[owner]["ref_cash"] = 2500
+    m.bot.calls.clear()
+    await m.cb_ref_withdraw(Call("ref_withdraw", owner))
+    check("ref: вывод >=2000 создаёт заявку",
+          any("ЗАЯВКА НА ВЫВОД" in str(c) for c in m.bot.calls))
+
+    # перевод баланса в XP
+    m.users[owner]["ref_cash"] = 2500
+    xp0 = m._ensure_game(owner).get("xp", 0)
+    await m.cb_ref_to_xp(Call("ref_to_xp", owner))
+    check("ref: перевод в XP обнулил баланс", m.get_ref_cash(owner) == 0)
+    check("ref: XP вырос на сумму ₽", m._ensure_game(owner).get("xp", 0) == xp0 + 2500 * m.REF_TO_XP_RATE)
+
+
 async def main():
     m.bot = DummyBot()  # подменяем сетевой бот заглушкой
     print("─── E2E прогон воронки бота ───")
     for fn in [t_onboarding, t_day_gate_normal, t_admin_bypass, t_course_paid_flow,
-               t_day8_paywall, t_payment_security, t_pre_checkout, t_pricing]:
+               t_day8_paywall, t_payment_security, t_pre_checkout, t_pricing, t_referral_cash]:
         try:
             await fn()
         except Exception as e:

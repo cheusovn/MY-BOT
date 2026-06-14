@@ -64,6 +64,11 @@ DAY_TITLES = {
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 MANAGER = "@nikolay_cheusov"
+
+# ─── Реферальный баланс (₽) ─────────────────────────────────────────────────
+REF_PERCENT = 30        # % с оплаты приглашённого друга → на баланс пригласившего
+REF_MIN_PAYOUT = 2000   # минимальная сумма вывода на карту, ₽
+REF_TO_XP_RATE = 1      # 1 ₽ реферального баланса = N XP при переводе в XP
 WELCOME_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome.jpg")
 # Брендовые шапки-баннеры экранов (генерируются scripts/make_banners.py)
 IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
@@ -1928,6 +1933,10 @@ async def on_paid(message: Message):
             pass
         return
 
+    # Реферал: начисляем пригласившему % от боевой оплаты друга (RUB).
+    if sp.currency == "RUB":
+        await credit_referrer(user_id, sp.total_amount / 100)
+
     # Докупка 8-го дня (продвижение/SMM) — отдельный продукт, тариф не меняет.
     if plan_key == "day8":
         _ensure_game(user_id)["day8"] = True
@@ -2063,6 +2072,13 @@ async def grant_paid_access(chat_id: int, user_id: str, plan_key: str, amount_st
     track("pay_success", user_id, plan_key)
     new_badge = give_badge(user_id, "buyer")
     add_xp(user_id, "buy")
+
+    # Реферал: начисляем пригласившему % от боевой оплаты друга.
+    if plan_key != "test":
+        try:
+            await credit_referrer(user_id, float(amount_str))
+        except (TypeError, ValueError):
+            pass
 
     if plan_key == "test":
         await bot.send_message(
@@ -2267,6 +2283,94 @@ async def cb_remind(call: CallbackQuery):
     await show(call, text, downsell_kb())
 
 
+# ─── Реферальный баланс: начисление, вывод, перевод в XP ────────────────────
+
+def get_ref_cash(uid: str) -> int:
+    return int(users.get(uid, {}).get("ref_cash", 0))
+
+
+def add_ref_cash(uid: str, rub: int):
+    users.setdefault(uid, {})["ref_cash"] = get_ref_cash(uid) + int(rub)
+    save_users()
+
+
+async def credit_referrer(buyer_uid: str, amount_rub: float):
+    """Начисляет пригласившему REF_PERCENT% от оплаты приглашённого друга."""
+    owner = users.get(buyer_uid, {}).get("ref_by")
+    if not owner or owner == buyer_uid:
+        return
+    bonus = int(amount_rub * REF_PERCENT / 100)
+    if bonus <= 0:
+        return
+    add_ref_cash(owner, bonus)
+    try:
+        await bot.send_message(
+            int(owner),
+            f"💸 <b>+{bonus} ₽ на твой реферальный баланс!</b>\n\n"
+            "Друг по твоей ссылке оплатил курс.\n"
+            f"Баланс: <b>{get_ref_cash(owner)} ₽</b>.\n"
+            f"Вывод от {REF_MIN_PAYOUT} ₽ на карту или перевод в XP — "
+            "в разделе «🤝 Позвать друга».",
+        )
+    except Exception:
+        pass
+
+
+@dp.callback_query(lambda c: c.data == "ref_withdraw")
+async def cb_ref_withdraw(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    bal = get_ref_cash(user_id)
+    if bal < REF_MIN_PAYOUT:
+        await call.answer(
+            f"Вывод от {REF_MIN_PAYOUT} ₽. У тебя {bal} ₽ — пригласи ещё друзей 🙂",
+            show_alert=True,
+        )
+        return
+    await call.answer()
+    name = call.from_user.first_name or "друг"
+    uname = f"@{call.from_user.username}" if call.from_user.username else "нет username"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"💸 <b>ЗАЯВКА НА ВЫВОД</b>\n\n"
+            f"👤 {name} ({uname})\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"💰 Сумма: <b>{bal} ₽</b>\n"
+            "→ Переведи на карту и спиши баланс командой /refpaid",
+        )
+    except Exception:
+        pass
+    await show(
+        call,
+        f"💸 <b>Заявка на вывод {bal} ₽ отправлена!</b>\n\n"
+        f"Менеджер {MANAGER} свяжется и переведёт деньги на карту.\n"
+        "Обычно — в течение дня. Спасибо, что приводишь друзей! 💚",
+        to_manager_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data == "ref_to_xp")
+async def cb_ref_to_xp(call: CallbackQuery):
+    user_id = str(call.from_user.id)
+    bal = get_ref_cash(user_id)
+    if bal <= 0:
+        await call.answer("Баланс пуст — пригласи друзей, и тут появятся ₽ 🙂", show_alert=True)
+        return
+    xp_gain = int(bal * REF_TO_XP_RATE)
+    users[user_id]["ref_cash"] = 0
+    u = _ensure_game(user_id)
+    u["xp"] = u.get("xp", 0) + xp_gain
+    save_users()
+    refresh_discount(user_id)
+    await show(
+        call,
+        f"🔄 <b>Готово!</b> {bal} ₽ → <b>+{xp_gain} XP</b>.\n\n"
+        "XP можно потратить на скидки и генерации в 🛒 магазине,\n"
+        "и они поднимают твою личную скидку на курс 👇",
+        start_kb(),
+    )
+
+
 @dp.callback_query(lambda c: c.data == "referral")
 async def cb_referral(call: CallbackQuery):
     user_id = str(call.from_user.id)
@@ -2305,11 +2409,15 @@ async def cb_referral(call: CallbackQuery):
     )
     share_url = f"https://t.me/share/url?url={quote(invite_link)}&text={quote(share_text)}"
 
+    bal = get_ref_cash(user_id)
     text = (
         "💸 <b>ПАРТНЁРСКАЯ ПРОГРАММА</b>\n\n"
-        "🎁 Ты получаешь <b>30% на карту</b> с каждой оплаты\n"
+        f"💰 <b>Твой баланс: {bal} ₽</b>\n"
+        f"Вывод на карту — от <b>{REF_MIN_PAYOUT} ₽</b>, либо в любой момент\n"
+        f"перевести в XP (1 ₽ = {REF_TO_XP_RATE} XP).\n\n"
+        f"🎁 С каждой оплаты друга — <b>{REF_PERCENT}% тебе</b> на баланс\n"
         "🎁 Друг получает <b>скидку 500 ₽</b>\n"
-        "🎮 <b>+10 XP</b> сразу, как только друг откроет твою ссылку\n\n"
+        "🎮 <b>+10 XP</b>, как только друг откроет твою ссылку\n\n"
         f"🎫 <b>Твой промокод:</b> <code>{code}</code>\n"
         f"🔗 <b>Твоя ссылка:</b> {invite_link}\n\n"
         "━━━━━━━━━━━━━━━━\n"
@@ -2317,13 +2425,14 @@ async def cb_referral(call: CallbackQuery):
         "▸ 1 друг взял VIP → 1 491 ₽ тебе\n"
         "▸ 3 друга VIP → 4 473 ₽ — окупился твой курс\n"
         "▸ 10 друзей → 14 910 ₽ на карте\n\n"
-        "👇 Нажми «Переслать другу» и выбери, кому отправить:"
+        "👇 Зови друзей:"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Переслать другу (1 тап)", url=share_url)],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
-    ])
-    await show(call, text, kb)
+    rows = [[InlineKeyboardButton(text="📤 Переслать другу (1 тап)", url=share_url)]]
+    if bal > 0:
+        rows.append([InlineKeyboardButton(text=f"💸 Вывести {bal} ₽ (от {REF_MIN_PAYOUT})", callback_data="ref_withdraw")])
+        rows.append([InlineKeyboardButton(text=f"🔄 Перевести {bal} ₽ в XP", callback_data="ref_to_xp")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
+    await show(call, text, InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(lambda c: c.data == "profile")
@@ -3494,6 +3603,30 @@ async def cmd_promo_check(message: Message):
         await message.answer(f"🎫 {code}\n👤 {owner_name}\n🆔 <code>{owner}</code>")
     else:
         await message.answer(f"❌ {code} не найден.")
+
+
+@dp.message(Command("refpaid"))
+async def cmd_refpaid(message: Message):
+    """Админ: обнулить реферальный баланс пользователя после выплаты. /refpaid <user_id>"""
+    if message.from_user.id != ADMIN_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Формат: /refpaid <user_id>")
+        return
+    uid = args[1].strip()
+    if uid not in users:
+        await message.answer(f"❌ Пользователь <code>{uid}</code> не найден.")
+        return
+    paid = get_ref_cash(uid)
+    users[uid]["ref_cash"] = 0
+    save_users()
+    await message.answer(f"✅ Баланс <code>{uid}</code> обнулён (было {paid} ₽). Выплата зафиксирована.")
+    try:
+        await bot.send_message(int(uid),
+            f"✅ <b>Выплата {paid} ₽ отправлена на карту!</b>\nСпасибо, что приводишь друзей 💚")
+    except Exception:
+        pass
 
 
 # ─── FOLLOW-UP ЦЕПОЧКА (4 триггера) ──────────────────────────────────────────────────────
