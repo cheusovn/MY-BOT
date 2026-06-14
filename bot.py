@@ -13,8 +13,9 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
-    BufferedInputFile, LabeledPrice, PreCheckoutQuery,
+    BufferedInputFile, LabeledPrice, PreCheckoutQuery, ErrorEvent,
 )
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -167,6 +168,18 @@ def single_flight(fn):
     wrapper.__name__ = getattr(fn, "__name__", "wrapper")
     wrapper.__doc__ = getattr(fn, "__doc__", None)
     return wrapper
+
+
+@dp.errors()
+async def on_error(event: ErrorEvent):
+    """Глобальный перехват ошибок: сетевые сбои Telegram логируем одной строкой
+    (бот сам переподключается через polling), остальное — с трейсбеком."""
+    exc = event.exception
+    if isinstance(exc, (TelegramNetworkError, TelegramRetryAfter)):
+        logging.warning(f"Сетевой сбой Telegram (восстановится сам): {type(exc).__name__}: {exc}")
+    else:
+        logging.exception(f"Необработанная ошибка: {type(exc).__name__}: {exc}")
+    return True  # считаем обработанной — не роняем polling
 
 
 DATA_DIR = "/data" if os.path.exists("/data") else "."
