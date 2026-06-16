@@ -329,3 +329,229 @@ def generate_code(name: str) -> str:
         code = base + ''.join(random.choices(string.digits, k=3))
         if code not in promos:
             return code
+
+
+# ─── SOCIAL PROOF: ротация живых отзывов ────────────────────────────────────────────────────────
+
+# Честный social proof: агрегированные формулировки без выдуманных имён/городов/точного времени,
+# которые легко опровергнуть и потерять доверие. Опираемся на реальные счётчики, где можем.
+SOCIAL_PROOF_LINES = [
+    "👋 Рядом учатся такие же новички — ты не один",
+    "💚 VIP с куратором берут чаще всего: так спокойнее",
+    "✨ Сегодня к нам заглянули ещё несколько человек",
+    "🎓 Начать можно бесплатно — без карты и обязательств",
+    "🌱 Учимся в своём темпе, спешить не нужно",
+]
+
+
+def social_proof() -> str:
+    return random.choice(SOCIAL_PROOF_LINES)
+
+
+GOAL_LABELS = {
+    "freelance": "заработок на фрилансе",
+    "business": "прокачку бизнеса",
+    "curious": "знакомство с AI",
+}
+
+GOAL_HOOKS = {
+    "freelance": (
+        "💸 <b>Хочешь подзаработать на нейросетях?</b>\n\n"
+        "Сейчас многие ищут, кто сделает им картинку,\n"
+        "ролик или карточку товара. Платят <b>800–2 500 ₽</b>\n"
+        "за штуку — а умеют пока единицы.\n\n"
+        "Это обычный навык. Ему можно научиться.\n\n"
+    ),
+    "business": (
+        "🏢 <b>Хочешь применить нейросети в своём деле?</b>\n\n"
+        "Контент, реклама, тексты — это можно делать\n"
+        "самому, быстрее и без подрядчиков:\n\n"
+        "▸ меньше тратишь на дизайнеров и копирайтеров\n"
+        "▸ больше материалов своими силами\n"
+        "▸ быстрее проверяешь идеи\n\n"
+    ),
+    "curious": (
+        "🔍 <b>Просто интересно, как это всё работает?</b>\n\n"
+        "Скажу честно: волшебной кнопки нет.\n"
+        "Но если уделять час-другой в день,\n"
+        "за неделю реально разобраться с нуля.\n"
+        "Спокойно, по шагам — я рядом.\n\n"
+    ),
+}
+
+
+# ─── ТАРИФЫ (единый источник цен) ───────────────────────────────────────────────────────────────
+# rub_old / rub_now — для отображения. stars — цена в Telegram Stars (оплата без ИП/самозанятого).
+# Курс ⭐: ≈ 1 Star ≈ 1.7 ₽ (Telegram удерживает комиссию, выплата через Fragment).
+TARIFFS = {
+    "base": {"label": "📦 Базовый", "old": 5900, "now": 2970, "floor": 1990, "stars": 1750,
+             "perks": "Все 7 дней курса + доступ навсегда"},
+    "vip":  {"label": "⭐ VIP с куратором", "old": 9900, "now": 4970, "floor": 3470, "stars": 2900,
+             "perks": "Все 7 дней + личный куратор + чат 24/7 + бонусы на 6 470 ₽"},
+    "pro":  {"label": "🚀 PRO + продвижение", "old": 14900, "now": 7970, "floor": 5970, "stars": 4690,
+             "perks": "Всё из VIP + где брать заказы + вирусный контент + SMM + 8-й день"},
+    # Бонусный 8-й день (SMM, продвижение, продажи, маркетинг, фриланс).
+    # Входит в PRO; для Базового и VIP — докупается отдельно. Фикс-цена (floor=now).
+    "day8": {"label": "🚀 День 8 — продвижение и продажи", "old": 2990, "now": 1790, "floor": 1790, "stars": 1100,
+             "perks": "Бонусный день: SMM, продвижение, продажи, маркетинг и фриланс"},
+    # Технический тариф для проверки боевой оплаты ЮKassa. Доступен только админу
+    # через /paytest, в меню тарифов НЕ показывается. После оплаты выдаёт 1-й день.
+    "test": {"label": "🧪 Тест-доступ (1 день)", "old": 100, "now": 100, "floor": 100, "stars": 1,
+             "perks": "Проверочный платёж — открывает доступ к 1-му дню курса"},
+}
+
+# ─── ЮKassa (Telegram Payments) ───────────────────────────────────────────────────────────────────
+# Provider token из @BotFather → Payments → ЮKassa. Тестовый содержит ":TEST:".
+# Если не задан — кнопка оплаты картой уходит на менеджера (как раньше).
+YOOKASSA_TOKEN = os.environ.get("YOOKASSA_PROVIDER_TOKEN", "")
+YOOKASSA_TEST = ":TEST:" in YOOKASSA_TOKEN
+# Система налогообложения для чека: 1=ОСН, 2=УСН доходы, 3=УСН доходы-расходы,
+# 4=ЕНВД, 5=ЕСХН, 6=Патент. По умолчанию — УСН доходы.
+YOOKASSA_TAX_SYSTEM = int(os.environ.get("YOOKASSA_TAX_SYSTEM", "2"))
+
+# ─── ЮKassa API (прямая интеграция: СБП, T-Pay, SberPay, карты) ────────────────────────────────────
+# Для приёма СБП / T-Pay / SberPay используется прямой API ЮKassa (Basic Auth: shopId:secret_key).
+# YOOKASSA_SECRET_KEY — секретный ключ из кабинета ЮKassa (live_... боевой, test_... тестовый).
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "1382534")
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "")
+YOOKASSA_API_ENABLED = bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)
+YOOKASSA_API_TEST = YOOKASSA_SECRET_KEY.startswith("test_")
+# Куда вернуть покупателя после оплаты (https). По умолчанию — обратно в бот.
+YOOKASSA_RETURN_URL = os.environ.get("YOOKASSA_RETURN_URL", f"https://t.me/{BOT_USERNAME}")
+
+# ─── АНАЛИТИКА: лог воронки ───────────────────────────────────────────────────────────────────────
+EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
+events_log = load_json(EVENTS_FILE, {"counters": {}, "recent": []})
+
+
+def track(event: str, uid: str = "", extra: str = ""):
+    """Считает события воронки: land_start, day1, day2, tariffs, buy_*, pay_success, referral…"""
+    try:
+        events_log.setdefault("counters", {})
+        events_log["counters"][event] = events_log["counters"].get(event, 0) + 1
+        events_log.setdefault("recent", []).append(
+            {"e": event, "uid": uid, "x": extra, "t": int(now_ts())})
+        events_log["recent"] = events_log["recent"][-500:]
+        _mark_dirty("events")
+    except Exception:
+        pass
+
+
+# ─── УЧЁТ РАСХОДОВ НА ГЕНЕРАЦИЮ (OpenRouter) ────────────────────────────────────────────────────────
+USD_RUB = 100  # курс для подсчёта расходов в ₽ (1 $ = 100 ₽)
+# Цена за 1 картинку, $. Измерено по Activity: 2.5 и 3.1. Остальные — оценка (≈).
+GEN_COST_USD = {
+    "google/gemini-2.5-flash-image":         0.039,
+    "google/gemini-3.1-flash-image-preview": 0.068,
+    "google/gemini-3-pro-image-preview":     0.12,
+    "openai/gpt-5-image-mini":               0.05,
+    "openai/gpt-5-image":                    0.15,
+    "openai/gpt-5.4-image-2":                0.20,
+    "sourceful/riverflow-v2-fast":           0.02,
+    "bytedance-seed/seedream-4.5":           0.04,
+    "black-forest-labs/flux.2-pro":          0.045,
+    "x-ai/grok-imagine-image-quality":       0.06,
+}
+# Цены по факту OpenRouter (остальные — оценка ≈)
+GEN_COST_MEASURED = {
+    "google/gemini-2.5-flash-image", "google/gemini-3.1-flash-image-preview",
+    "sourceful/riverflow-v2-fast", "bytedance-seed/seedream-4.5",
+}
+GEN_LABELS = {
+    "google/gemini-2.5-flash-image":         "Nano Banana (2.5)",
+    "google/gemini-3.1-flash-image-preview": "Nano Banana 2 (3.1)",
+    "google/gemini-3-pro-image-preview":     "Nano Banana Pro",
+    "openai/gpt-5-image-mini":               "GPT Image mini",
+    "openai/gpt-5-image":                    "GPT Image",
+    "openai/gpt-5.4-image-2":                "GPT Image Pro (5.4)",
+    "sourceful/riverflow-v2-fast":           "Riverflow Fast",
+    "bytedance-seed/seedream-4.5":           "Seedream 4.5",
+    "black-forest-labs/flux.2-pro":          "FLUX.2 Pro",
+    "x-ai/grok-imagine-image-quality":       "Grok Imagine",
+}
+
+
+def record_gen(model_id: str):
+    """Считает успешные генерации по модели (для раздела «Расходы» в админке)."""
+    try:
+        gc = events_log.setdefault("gen_counts", {})
+        gc[model_id] = gc.get(model_id, 0) + 1
+        _mark_dirty("events")
+    except Exception:
+        pass
+
+
+def build_spend_text() -> str:
+    gc = events_log.get("gen_counts", {})
+    lines, total_usd = [], 0.0
+    for mid, label in GEN_LABELS.items():
+        n = gc.get(mid, 0)
+        unit = GEN_COST_USD.get(mid, 0.0)
+        sub = n * unit
+        total_usd += sub
+        mark = "" if mid in GEN_COST_MEASURED else "≈"
+        lines.append(
+            f"• {label}: <b>{n}</b> × {mark}${unit:.3f} = ${sub:.2f} ({sub * USD_RUB:.0f} ₽)"
+        )
+    # неизвестные модели, если вдруг появятся
+    for mid, n in gc.items():
+        if mid not in GEN_LABELS:
+            lines.append(f"• {mid}: <b>{n}</b> (цена неизв.)")
+    total_n = sum(gc.values())
+    return (
+        f"💸 <b>Расходы на генерацию</b>\n"
+        f"<i>Курс: 1 $ = {USD_RUB} ₽ · ≈ — оценка, без ≈ — по факту OpenRouter</i>\n\n"
+        f"{chr(10).join(lines) if lines else '— генераций пока не было'}\n\n"
+        f"🖼 Всего генераций: <b>{total_n}</b>\n"
+        f"💰 <b>Итого: ${total_usd:.2f} ≈ {total_usd * USD_RUB:.0f} ₽</b>"
+    )
+
+
+# ─── ГЕЙМИФИКАЦИЯ: XP, уровни, стрики, бейджи, квесты ──────────────────────────────────────────────
+LEVELS = [
+    (0,    "🥉 Новичок"),
+    (100,  "🥈 AI-Джуниор"),
+    (300,  "🥇 AI-Мастер"),
+    (700,  "💎 AI-Профи"),
+    (1500, "👑 AI-Гуру"),
+]
+
+BADGES = {
+    "first_step":   "🚀 Первый шаг",
+    "day1_done":    "✅ День 1 пройден",
+    "day2_done":    "🔥 День 2 пройден",
+    "explorer":     "🎁 Исследователь (забрал подарок)",
+    "referrer":     "💸 Амбассадор (есть промокод)",
+    "buyer":        "👑 Студент академии",
+    "streak3":      "🔥 Серия 3 дня",
+    "streak7":      "⚡ Серия 7 дней",
+    "challenger":   "🥊 Боец челленджа",
+    "lucky":        "🎰 Крутанул колесо удачи",
+    "wonder":       "🪄 Первое волшебное фото",
+}
+
+XP_RULES = {
+    "day1": 10, "day2": 15, "tariffs": 5,
+    "free_gift": 5, "referral": 10, "daily": 5, "buy": 0,
+    "challenge": 10, "wow": 5, "ref_join": 10,
+}
+
+# ─── СКИДКА ЗА ПРОГРЕСС (механика №6): чем больше XP — тем больше личная скидка ──────────────────
+# Порог XP → размер скидки в ₽. Скидка "тает" — действует ограниченное время после разблокировки.
+DISCOUNT_TIERS = [(100, 500), (300, 1000), (700, 1500)]
+DISCOUNT_TTL = 24 * 3600  # сколько живёт разблокированная скидка, сек
+
+# ─── AI ЧЕРЕЗ OPENROUTER (только OpenRouter, без прямых запросов в Google/др.) ──────────────────────
+# Один провайдер — OpenRouter. Ключ ТОЛЬКО из окружения (никогда не хардкодим).
+# Каскад моделей внутри OpenRouter: сначала бесплатные :free, при лимите/ошибке — дешёвый платный
+# резерв. Всё текстовое и короткое (max_tokens мал) → расход минимальный.
+#
+# Env: OPENROUTER_API_KEY — openrouter.ai
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_EXTRA = {"HTTP-Referer": "https://t.me/Trueman_ai_bot", "X-Title": "True AI Academy"}
+
+# Бесплатные текстовые модели отключены: :free слишком часто отдают 429/404 и только
+# добавляют задержку. Текст идём сразу на дешёвый gpt-4o-mini (доли цента за вызов).
+AI_FREE_MODELS = []
+AI_PAID_RESERVE = "openai/gpt-4o-mini"  # основной (и единственный) текстовый путь
