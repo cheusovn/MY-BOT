@@ -214,3 +214,118 @@ class AntiDoubleTap(BaseMiddleware):
 
 
 dp.callback_query.middleware(AntiDoubleTap())
+
+# ─── Анти-повтор тяжёлых операций (генерация, /imgtest) ─────────────────────
+# Команда/сообщение, запускающее долгую AI-операцию, не должно стартовать второй
+# раз, пока первая ещё идёт (при лаге юзер жмёт 2-3 раза → генерировалось 4 раза).
+_busy_users: set = set()
+
+
+def single_flight(fn):
+    """Декоратор для message-хендлеров: один тяжёлый запрос на пользователя за раз."""
+    async def wrapper(message, *a, **k):
+        uid = message.from_user.id if message.from_user else 0
+        if uid in _busy_users:
+            try:
+                await message.answer("⏳ Уже выполняю предыдущий запрос — дождись результата 🙂")
+            except Exception:
+                pass
+            return
+        _busy_users.add(uid)
+        try:
+            return await fn(message, *a, **k)
+        finally:
+            _busy_users.discard(uid)
+    wrapper.__wrapped__ = fn
+    wrapper.__name__ = getattr(fn, "__name__", "wrapper")
+    wrapper.__doc__ = getattr(fn, "__doc__", None)
+    return wrapper
+
+
+@dp.errors()
+async def on_error(event: ErrorEvent):
+    """Глобальный перехват ошибок: сетевые сбои Telegram логируем одной строкой
+    (бот сам переподключается через polling), остальное — с трейсбеком."""
+    exc = event.exception
+    if isinstance(exc, (TelegramNetworkError, TelegramRetryAfter)):
+        logging.warning(f"Сетевой сбой Telegram (восстановится сам): {type(exc).__name__}: {exc}")
+    else:
+        logging.exception(f"Необработанная ошибка: {type(exc).__name__}: {exc}")
+    return True  # считаем обработанной — не роняем polling
+
+
+DATA_DIR = "/data" if os.path.exists("/data") else "."
+PROMO_FILE = os.path.join(DATA_DIR, "promo.json")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+SPOTS_FILE = os.path.join(DATA_DIR, "spots.json")
+
+
+def load_json(file, default=None):
+    if os.path.exists(file):
+        with open(file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return default if default is not None else {}
+
+
+def save_json(file, data):
+    # Атомарная запись: пишем во временный файл и подменяем, чтобы не оставить битый JSON.
+    # Защита от RuntimeError: dictionary changed size during iteration — копируем структуру
+    # перед сериализацией (модификации из других корутин не уронят json.dump).
+    try:
+        snapshot = json.loads(json.dumps(data, ensure_ascii=False))
+    except Exception:
+        snapshot = data
+    tmp = f"{file}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, file)
+
+
+promos = load_json(PROMO_FILE)
+users = load_json(USERS_FILE)
+spots_data = load_json(SPOTS_FILE, {"spots": 23, "updated": time.time()})
+
+# ─── Отложенная запись на диск (debounce) ──────────────────────────────────────────────────────────
+# Вместо блокирующей записи всего файла при каждом действии — помечаем "грязным",
+# а фоновый flusher раз в пару секунд пишет в отдельном потоке. Event-loop не блокируется.
+_dirty = set()
+
+
+def _mark_dirty(key: str):
+    _dirty.add(key)
+
+
+def save_promos(): _mark_dirty("promos")
+def save_users(): _mark_dirty("users")
+def save_spots(): _mark_dirty("spots")
+
+
+def get_spots() -> int:
+    return int(spots_data.get("spots", 23))
+
+
+def tick_spots():
+    s = get_spots()
+    if s > 3:
+        spots_data["spots"] = s - 1
+        spots_data["updated"] = time.time()
+        save_spots()
+
+
+def now_ts() -> float:
+    return time.time()
+
+
+def set_stage(uid: str, stage: str):
+    if uid in users:
+        users[uid]["stage"] = stage
+        users[uid][f"{stage}_at"] = now_ts()
+        save_users()
+
+
+def generate_code(name: str) -> str:
+    base = ''.join(c.upper() for c in name if c.isalpha())[:4] or "REF"
+    while True:
+        code = base + ''.join(random.choices(string.digits, k=3))
+        if code not in promos:
+            return code
