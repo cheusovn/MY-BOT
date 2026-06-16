@@ -1,2 +1,11 @@
-aiogram==3.13.1
-aiohttp==3.10.10
+# aiogram 3.13 устарел и жёстко требует aiohttp<3.11. Поднимаем до 3.15+ ради CVE-фикса aiohttp.
+# 3.13→3.15 — без breaking changes для используемого API (Bot, Dispatcher, FSM, Router, callbacks).
+aiogram>=3.15.0,<4
+# aiohttp 3.10.x содержит CVE-2024-52303 (memory leak), CVE-2024-52304 (request smuggling),
+# GHSA-9548-qrrj-x5pj (path traversal в static). Минимум 3.11.10.
+aiohttp>=3.11.10,<4
+# Optional: Sentry error tracking — активируется через SENTRY_DSN env. Без env — no-op.
+sentry-sdk>=2.18.0
+# Optional: Redis-FSM для сохранения состояний между рестартами — активируется через REDIS_URL.
+# Без env используется MemoryStorage (как раньше).
+redis>=5.1.1
