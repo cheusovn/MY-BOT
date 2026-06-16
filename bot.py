@@ -1,8 +1,10 @@
 import asyncio
+import html
 import json
 import os
 import logging
 import random
+import re
 import string
 import time
 import base64
@@ -13,9 +15,11 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
-    BufferedInputFile, LabeledPrice, PreCheckoutQuery, ErrorEvent,
+    BufferedInputFile, LabeledPrice, PreCheckoutQuery, ErrorEvent, BotCommand,
 )
-from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramNetworkError, TelegramRetryAfter, TelegramBadRequest,
+)
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -24,16 +28,31 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = 817730727
+# ADMIN_ID берётся из env (ADMIN_ID), default — исторический ID владельца.
+# Поддерживается список через запятую: "111,222,333" (полезно при передаче бота).
+_ADMIN_ENV = os.environ.get("ADMIN_ID", "817730727").strip()
+try:
+    ADMIN_IDS = {int(x) for x in _ADMIN_ENV.replace(";", ",").split(",") if x.strip()}
+except ValueError:
+    ADMIN_IDS = {817730727}
+# Обратная совместимость с одиночным ADMIN_ID по всему коду
+ADMIN_ID = next(iter(ADMIN_IDS)) if ADMIN_IDS else 817730727
 
 
 def is_admin(uid) -> bool:
     """Владелец-админ — для полного теста бота без лимитов (время, генерации, гейты).
     На обычных пользователей не влияет."""
     try:
-        return int(uid) == ADMIN_ID
+        return int(uid) in ADMIN_IDS
     except (TypeError, ValueError):
         return False
+
+
+def esc(s) -> str:
+    """HTML-escape для подстановки имён/username в сообщения с parse_mode=HTML.
+    Без этого юзер с first_name='<a href="evil">x</a>' ломает разметку и
+    подсовывает кликабельные ссылки в админ-уведомления."""
+    return html.escape(str(s or ""), quote=False)
 BOT_USERNAME = "Trueman_ai_bot"
 TRIAL_DAY_1 = "https://t.me/+5ep9DPf7eNMzZjdi"
 TRIAL_DAY_2 = "https://t.me/+SpoNR-ahkJFiZTJi"
@@ -82,6 +101,43 @@ DAY2_COOLDOWN = 12 * 3600  # секунд
 
 logging.basicConfig(level=logging.INFO)
 
+# ─── Sentry (опционально) ─────────────────────────────────────────────────────
+# Активируется только при наличии SENTRY_DSN. Без env — no-op, нулевой оверхед.
+if os.environ.get("SENTRY_DSN"):
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=os.environ["SENTRY_DSN"],
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES", "0.0")),
+            send_default_pii=False,  # не отправляем PII в Sentry
+        )
+        logging.info("Sentry initialized")
+    except Exception as _e:
+        logging.warning(f"Sentry init failed: {_e}")
+
+# ─── Глобальная aiohttp-сессия для всех внешних вызовов (OpenRouter / YooKassa) ─
+# Раньше создавалась новая сессия на каждый запрос (TCP+DNS overhead ~сотни мс,
+# на медленном линке хуже). Делаем одну общую с пулом коннекшнов и DNS-кэшем.
+_HTTP_SESSION: aiohttp.ClientSession | None = None
+_HTTP_SESSION_LOCK = asyncio.Lock()
+
+
+async def get_http() -> aiohttp.ClientSession:
+    """Ленивая инициализация общей aiohttp.ClientSession.
+    Создаётся при первом вызове внутри уже работающего event loop."""
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None or _HTTP_SESSION.closed:
+        async with _HTTP_SESSION_LOCK:
+            if _HTTP_SESSION is None or _HTTP_SESSION.closed:
+                _HTTP_SESSION = aiohttp.ClientSession(
+                    connector=aiohttp.TCPConnector(
+                        limit=100, ttl_dns_cache=300, family=0,
+                    ),
+                    timeout=aiohttp.ClientTimeout(total=120),
+                )
+    return _HTTP_SESSION
+
+
 # Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
 # а не висит минуту, блокируя ответ (число секунд!).
 _session = AiohttpSession(timeout=30)
@@ -98,7 +154,23 @@ bot = Bot(
     session=_session,
     default=DefaultBotProperties(parse_mode="HTML")
 )
-dp = Dispatcher(storage=MemoryStorage())
+# FSM-хранилище: Redis (если задан REDIS_URL), иначе Memory.
+# При MemoryStorage любой рестарт обрывает PayState/WowState/BroadcastState —
+# юзер посреди оплаты теряет сессию. Redis это лечит.
+def _build_storage():
+    redis_url = os.environ.get("REDIS_URL", "").strip()
+    if not redis_url:
+        return MemoryStorage()
+    try:
+        from aiogram.fsm.storage.redis import RedisStorage
+        logging.info(f"FSM: RedisStorage via {redis_url.split('@')[-1]}")
+        return RedisStorage.from_url(redis_url)
+    except Exception as _e:
+        logging.warning(f"Redis storage init failed ({_e}) → MemoryStorage fallback")
+        return MemoryStorage()
+
+
+dp = Dispatcher(storage=_build_storage())
 
 
 # ─── Анти-дабл-тап на кнопках ───────────────────────────────────────────────
@@ -196,10 +268,16 @@ def load_json(file, default=None):
 
 
 def save_json(file, data):
-    # Атомарная запись: пишем во временный файл и подменяем, чтобы не оставить битый JSON
+    # Атомарная запись: пишем во временный файл и подменяем, чтобы не оставить битый JSON.
+    # Защита от RuntimeError: dictionary changed size during iteration — копируем структуру
+    # перед сериализацией (модификации из других корутин не уронят json.dump).
+    try:
+        snapshot = json.loads(json.dumps(data, ensure_ascii=False))
+    except Exception:
+        snapshot = data
     tmp = f"{file}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
     os.replace(tmp, file)
 
 
@@ -491,13 +569,13 @@ async def _openrouter_call(model: str, system: str, user: str, max_tokens: int) 
     }
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
-    timeout = aiohttp.ClientTimeout(total=40)
-    async with aiohttp.ClientSession(timeout=timeout) as s:
-        async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-            data = await r.json()
-            if r.status != 200:
-                raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
-            return data["choices"][0]["message"]["content"].strip()
+    s = await get_http()
+    async with s.post(OPENROUTER_URL, json=payload, headers=headers,
+                      timeout=aiohttp.ClientTimeout(total=40)) as r:
+        data = await r.json()
+        if r.status != 200:
+            raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+        return data["choices"][0]["message"]["content"].strip()
 
 
 async def ai_text(system: str, user: str, max_tokens: int = 350) -> str:
@@ -574,7 +652,7 @@ async def ai_generate_image(prompt: str, image_b64: str):
     ]
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
-    timeout = aiohttp.ClientTimeout(total=120)
+    s = await get_http()
     for model in AI_IMAGE_MODELS:
         payload = {
             "model": model,
@@ -582,20 +660,20 @@ async def ai_generate_image(prompt: str, image_b64: str):
             "modalities": ["image", "text"],
         }
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as s:
-                async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-                    data = await r.json()
-                    if r.status != 200:
-                        raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
-                    msg = data["choices"][0]["message"]
-                    # Картинки приходят в message.images[].image_url.url (data URL)
-                    for im in (msg.get("images") or []):
-                        url = (im.get("image_url") or {}).get("url", "")
-                        if url.startswith("data:"):
-                            logging.info(f"image OK via OpenRouter:{model}")
-                            record_gen(model)
-                            return base64.b64decode(url.split(",", 1)[1])
-                    logging.warning(f"image model {model} returned no images → next")
+            async with s.post(OPENROUTER_URL, json=payload, headers=headers,
+                              timeout=aiohttp.ClientTimeout(total=120)) as r:
+                data = await r.json()
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+                msg = data["choices"][0]["message"]
+                # Картинки приходят в message.images[].image_url.url (data URL)
+                for im in (msg.get("images") or []):
+                    url = (im.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        logging.info(f"image OK via OpenRouter:{model}")
+                        record_gen(model)
+                        return base64.b64decode(url.split(",", 1)[1])
+                logging.warning(f"image model {model} returned no images → next")
         except Exception as e:
             logging.warning(f"ai_generate_image {model} failed: {e} → next")
             continue
@@ -620,20 +698,20 @@ async def ai_generate_one(model: str, prompt: str, image_b64: str, modalities=No
                "modalities": modalities or ["image", "text"]}
     if image_config:
         payload["image_config"] = image_config
-    timeout = aiohttp.ClientTimeout(total=120)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-                data = await r.json()
-                if r.status != 200:
-                    logging.warning(f"ai_generate_one {model} HTTP {r.status}: {str(data)[:120]}")
-                    return None
-                for im in (data["choices"][0]["message"].get("images") or []):
-                    url = (im.get("image_url") or {}).get("url", "")
-                    if url.startswith("data:"):
-                        logging.info(f"image OK via OpenRouter:{model}")
-                        record_gen(model)
-                        return base64.b64decode(url.split(",", 1)[1])
+        s = await get_http()
+        async with s.post(OPENROUTER_URL, json=payload, headers=headers,
+                          timeout=aiohttp.ClientTimeout(total=120)) as r:
+            data = await r.json()
+            if r.status != 200:
+                logging.warning(f"ai_generate_one {model} HTTP {r.status}: {str(data)[:120]}")
+                return None
+            for im in (data["choices"][0]["message"].get("images") or []):
+                url = (im.get("image_url") or {}).get("url", "")
+                if url.startswith("data:"):
+                    logging.info(f"image OK via OpenRouter:{model}")
+                    record_gen(model)
+                    return base64.b64decode(url.split(",", 1)[1])
     except Exception as e:
         logging.warning(f"ai_generate_one {model} failed: {e}")
     return None
@@ -649,7 +727,7 @@ async def ai_vision(system: str, user_text: str, image_b64: str, max_tokens: int
     ]
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     headers.update(OPENROUTER_EXTRA)
-    timeout = aiohttp.ClientTimeout(total=45)
+    s = await get_http()
     for model in AI_VISION_MODELS + [AI_VISION_PAID]:
         payload = {
             "model": model,
@@ -661,15 +739,15 @@ async def ai_vision(system: str, user_text: str, image_b64: str, max_tokens: int
             "temperature": 0.7,
         }
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as s:
-                async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-                    data = await r.json()
-                    if r.status != 200:
-                        raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
-                    out = data["choices"][0]["message"]["content"].strip()
-                    if out:
-                        logging.info(f"AI vision OK via OpenRouter:{model}")
-                        return out
+            async with s.post(OPENROUTER_URL, json=payload, headers=headers,
+                              timeout=aiohttp.ClientTimeout(total=45)) as r:
+                data = await r.json()
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status}: {str(data)[:200]}")
+                out = data["choices"][0]["message"]["content"].strip()
+                if out:
+                    logging.info(f"AI vision OK via OpenRouter:{model}")
+                    return out
         except Exception as e:
             logging.warning(f"OpenRouter vision {model} failed: {e} → next")
             continue
@@ -1400,22 +1478,24 @@ async def cmd_start(message: Message, state: FSMContext):
 
     is_new = user_id not in users
     if is_new:
-        users[user_id] = {"name": name, "stage": "start", "start_at": now_ts()}
+        # Telegram first_name до 64 символов — обрезаем (на всякий случай) и сохраняем
+        users[user_id] = {"name": (name or "")[:64], "stage": "start", "start_at": now_ts()}
         save_users()
-        uname = f"@{message.from_user.username}" if message.from_user.username else "нет username"
+        raw_uname = message.from_user.username
+        uname = f"@{raw_uname}" if raw_uname else "нет username"
         # Ссылки для открытия профиля: по username (если есть) и по ID (tg://user)
         open_link = (
-            f"https://t.me/{message.from_user.username}" if message.from_user.username
+            f"https://t.me/{raw_uname}" if raw_uname
             else f"tg://user?id={user_id}"
         )
         try:
             await bot.send_message(
                 ADMIN_ID,
                 f"🔔 <b>Новый пользователь!</b>\n\n"
-                f"👤 {name} ({uname})\n"
+                f"👤 {esc(name)} ({esc(uname)})\n"
                 f"🆔 ID: <code>{user_id}</code>\n"
                 f"👥 Всего в боте: {len(users)}\n\n"
-                f"➡️ <a href=\"{open_link}\">Открыть профиль</a>",
+                f"➡️ <a href=\"{esc(open_link)}\">Открыть профиль</a>",
                 disable_web_page_preview=True,
             )
         except Exception:
@@ -2024,15 +2104,15 @@ async def cb_card(call: CallbackQuery):
     real_disc = t["now"] - final
     disc_note = f" (личная скидка −{real_disc} ₽)" if real_disc > 0 else ""
     wheel_prize = _ensure_game(user_id).get("wheel", "")
-    prize_note = f"\n🎰 Приз колеса: {wheel_prize}" if wheel_prize else ""
+    prize_note = f"\n🎰 Приз колеса: {esc(wheel_prize)}" if wheel_prize else ""
     try:
         await bot.send_message(
             ADMIN_ID,
             f"💰 <b>НОВАЯ ЗАЯВКА (карта)!</b>\n\n"
-            f"👤 {name} ({uname})\n"
+            f"👤 {esc(name)} ({esc(uname)})\n"
             f"🆔 ID: <code>{call.from_user.id}</code>\n"
-            f"📦 Тариф: {t['label']} — <b>{final} ₽</b>{disc_note}\n"
-            f"🎯 Цель: {goal}{prize_note}"
+            f"📦 Тариф: {esc(t['label'])} — <b>{final} ₽</b>{disc_note}\n"
+            f"🎯 Цель: {esc(goal)}{prize_note}"
         )
     except Exception:
         pass
@@ -2201,11 +2281,11 @@ async def on_paid(message: Message):
         await bot.send_message(
             ADMIN_ID,
             f"✅✅✅ <b>ОПЛАТА{' (ТЕСТ)' if is_test else ''}!</b>\n\n"
-            f"👤 {name} ({uname})\n"
+            f"👤 {esc(name)} ({esc(uname)})\n"
             f"🆔 ID: <code>{user_id}</code>\n"
-            f"📦 Тариф: {t['label']}\n"
-            f"💳 {method}: {amount_str}\n"
-            f"🧾 charge: <code>{sp.telegram_payment_charge_id}</code>\n"
+            f"📦 Тариф: {esc(t['label'])}\n"
+            f"💳 {method}: {esc(amount_str)}\n"
+            f"🧾 charge: <code>{esc(sp.telegram_payment_charge_id)}</code>\n"
             + ("🧪 Это тестовый платёж — деньги не списаны.\n" if is_test else "")
             + "→ Добавь в закрытый чат с куратором."
         )
@@ -2220,12 +2300,21 @@ def _yk_auth_header() -> str:
     return "Basic " + base64.b64encode(raw).decode()
 
 
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"
+)
+
+
 def _valid_email(s: str) -> bool:
     s = (s or "").strip()
-    if " " in s or s.count("@") != 1:
+    if len(s) > 254 or " " in s or s.count("@") != 1:
+        return False
+    if not _EMAIL_RE.match(s):
         return False
     local, _, domain = s.partition("@")
-    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
+    if not local or domain.startswith(".") or domain.endswith(".") or ".." in domain:
+        return False
+    return True
 
 
 async def yk_create_payment(amount_rub: int, description: str, email: str, plan_key: str, user_id: str):
@@ -2255,15 +2344,15 @@ async def yk_create_payment(amount_rub: int, description: str, email: str, plan_
         "Idempotence-Key": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
-    timeout = aiohttp.ClientTimeout(total=30)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post("https://api.yookassa.ru/v3/payments", json=payload, headers=headers) as r:
-                data = await r.json()
-                if r.status not in (200, 201):
-                    logging.error(f"YK create payment failed {r.status}: {data}")
-                    return None, None
-                return data.get("id"), (data.get("confirmation") or {}).get("confirmation_url")
+        s = await get_http()
+        async with s.post("https://api.yookassa.ru/v3/payments", json=payload, headers=headers,
+                          timeout=aiohttp.ClientTimeout(total=30)) as r:
+            data = await r.json()
+            if r.status not in (200, 201):
+                logging.error(f"YK create payment failed {r.status}: {data}")
+                return None, None
+            return data.get("id"), (data.get("confirmation") or {}).get("confirmation_url")
     except Exception as e:
         logging.error(f"YK create payment error: {e}")
         return None, None
@@ -2271,11 +2360,11 @@ async def yk_create_payment(amount_rub: int, description: str, email: str, plan_
 
 async def yk_get_payment(payment_id: str):
     headers = {"Authorization": _yk_auth_header()}
-    timeout = aiohttp.ClientTimeout(total=30)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.get(f"https://api.yookassa.ru/v3/payments/{payment_id}", headers=headers) as r:
-                return await r.json()
+        s = await get_http()
+        async with s.get(f"https://api.yookassa.ru/v3/payments/{payment_id}", headers=headers,
+                         timeout=aiohttp.ClientTimeout(total=30)) as r:
+            return await r.json()
     except Exception as e:
         logging.error(f"YK get payment error: {e}")
         return None
@@ -2347,9 +2436,9 @@ async def grant_paid_access(chat_id: int, user_id: str, plan_key: str, amount_st
             ADMIN_ID,
             f"✅✅✅ <b>ОПЛАТА (ЮKassa API{' ТЕСТ' if YOOKASSA_API_TEST else ''})!</b>\n\n"
             f"🆔 ID: <code>{user_id}</code>\n"
-            f"📦 Тариф: {t['label']}\n"
-            f"💳 {amount_str} ₽ (СБП/T-Pay/SberPay/карта)\n"
-            f"🧾 payment: <code>{payment_id}</code>\n"
+            f"📦 Тариф: {esc(t['label'])}\n"
+            f"💳 {esc(amount_str)} ₽ (СБП/T-Pay/SberPay/карта)\n"
+            f"🧾 payment: <code>{esc(payment_id)}</code>\n"
             + ("🧪 Тестовый платёж — деньги не списаны.\n" if YOOKASSA_API_TEST else "→ Добавь в закрытый чат с куратором.")
         )
     except Exception:
@@ -2398,7 +2487,15 @@ async def cb_ykapi(call: CallbackQuery, state: FSMContext):
 async def on_pay_email(message: Message, state: FSMContext):
     email = (message.text or "").strip()
     if not _valid_email(email):
-        await message.answer("❌ Это не похоже на email. Введите адрес вида <code>name@mail.ru</code>:")
+        await message.answer(
+            "❌ Похоже на опечатку в email. Пример: <code>ivan@mail.ru</code>\n\n"
+            "Введи адрес ещё раз — или нажми /cancel и вернись через /tariffs.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать менеджеру",
+                                      url=f"https://t.me/{MANAGER.lstrip('@')}")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+            ]),
+        )
         return
     data = await state.get_data()
     plan_key = data.get("pay_plan", "test")
@@ -2554,7 +2651,7 @@ async def cb_ref_withdraw(call: CallbackQuery):
         await bot.send_message(
             ADMIN_ID,
             f"💸 <b>ЗАЯВКА НА ВЫВОД</b>\n\n"
-            f"👤 {name} ({uname})\n"
+            f"👤 {esc(name)} ({esc(uname)})\n"
             f"🆔 ID: <code>{user_id}</code>\n"
             f"💰 Сумма: <b>{bal} ₽</b>\n"
             "→ Переведи на карту и спиши баланс командой /refpaid",
@@ -2615,9 +2712,9 @@ async def cb_referral(call: CallbackQuery):
             await bot.send_message(
                 ADMIN_ID,
                 f"🎫 Новый промокод\n"
-                f"👤 {name}\n"
+                f"👤 {esc(name)}\n"
                 f"🆔 ID: <code>{user_id}</code>\n"
-                f"🎫 Код: <code>{code}</code>"
+                f"🎫 Код: <code>{esc(code)}</code>"
             )
         except Exception:
             pass
@@ -3664,17 +3761,17 @@ async def _img_test_one(model: str, prompt: str, image_b64: str, modalities=None
                "modalities": modalities or ["image", "text"]}
     if image_config:
         payload["image_config"] = image_config
-    timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(timeout=timeout) as s:
-        async with s.post(OPENROUTER_URL, json=payload, headers=headers) as r:
-            data = await r.json()
-            if r.status != 200:
-                raise RuntimeError(f"HTTP {r.status}: {str(data)[:120]}")
-            for im in (data["choices"][0]["message"].get("images") or []):
-                url = (im.get("image_url") or {}).get("url", "")
-                if url.startswith("data:"):
-                    record_gen(model)  # /imgtest тоже тратит деньги — учитываем в расходах
-                    return base64.b64decode(url.split(",", 1)[1])
+    s = await get_http()
+    async with s.post(OPENROUTER_URL, json=payload, headers=headers,
+                      timeout=aiohttp.ClientTimeout(total=120)) as r:
+        data = await r.json()
+        if r.status != 200:
+            raise RuntimeError(f"HTTP {r.status}: {str(data)[:120]}")
+        for im in (data["choices"][0]["message"].get("images") or []):
+            url = (im.get("image_url") or {}).get("url", "")
+            if url.startswith("data:"):
+                record_gen(model)  # /imgtest тоже тратит деньги — учитываем в расходах
+                return base64.b64decode(url.split(",", 1)[1])
     return None
 
 
@@ -4231,24 +4328,132 @@ async def disk_flusher():
                 logging.warning(f"flush {key} failed: {e}")
 
 
-# ─── ЗАПУСК с retry при сетевых сбоях ─────────────────────────────────────────────────────────
+# ─── Catch-all: пользователь прислал что-то непонятное (стикер/голос вне FSM) ─
+# ВАЖНО: регистрируется ПОСЛЕДНИМ — иначе перехватит /команды и FSM-сообщения.
+# Раньше бот молча игнорировал любой текст вне состояния → юзер думал «сломан».
+
+@dp.message()
+async def cb_fallback_anything(message: Message):
+    try:
+        await message.answer(
+            "🤖 Я работаю кнопками — открой главное меню 👇",
+            reply_markup=back_kb(),
+        )
+    except Exception:
+        pass
+
+
+# ─── Healthcheck HTTP-сервер ──────────────────────────────────────────────────
+# Amvera в `amvera.yml` объявляет containerPort: 80. Без HTTP-эндпоинта на этом
+# порту платформа не сможет проверить liveness и может считать контейнер мёртвым.
+# Без env HEALTH_PORT (default 80) — пытаемся 80, при OSError молча пропускаем
+# (например, локально без прав на 80).
+
+async def _start_healthcheck():
+    try:
+        from aiohttp import web
+        port = int(os.environ.get("HEALTH_PORT", "80"))
+
+        async def health(_request):
+            return web.json_response({"ok": True, "ts": int(now_ts()), "users": len(users)})
+
+        app = web.Application()
+        app.router.add_get("/", health)
+        app.router.add_get("/health", health)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logging.info(f"Healthcheck listening on :{port}")
+        return runner
+    except OSError as e:
+        # Порт занят/нет прав — для разработки норм, в Amvera root и 80 свободен.
+        logging.warning(f"Healthcheck not started: {e}")
+    except Exception as e:
+        logging.warning(f"Healthcheck setup failed: {e}")
+    return None
+
+
+# ─── BotCommands: показать команды в меню Telegram (рядом с полем ввода) ─────
+BOT_COMMANDS = [
+    BotCommand(command="start",     description="🏠 Главное меню"),
+    BotCommand(command="course",    description="📚 Мои уроки"),
+    BotCommand(command="tariffs",   description="💰 Тарифы"),
+    BotCommand(command="profile",   description="🎮 Мой прогресс и XP"),
+    BotCommand(command="challenge", description="🥊 Челлендж дня"),
+    BotCommand(command="top",       description="🏅 Рейтинг учеников"),
+    BotCommand(command="trial",     description="🎁 Бесплатный доступ"),
+    BotCommand(command="help",      description="❓ Помощь и контакты"),
+    BotCommand(command="cancel",    description="❌ Отменить ввод"),
+]
+
+
+async def _on_startup():
+    """Установка команд + healthcheck."""
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        logging.info(f"Bot commands set: {len(BOT_COMMANDS)}")
+    except Exception as e:
+        logging.warning(f"set_my_commands failed: {e}")
+    await _start_healthcheck()
+
+
+async def _on_shutdown():
+    """Graceful shutdown: сбрасываем грязные JSON синхронно (event loop уже
+    останавливается), закрываем общую aiohttp-сессию и сессию бота.
+    Без этого SIGTERM Amvera обрывает запись/сетевые соединения."""
+    logging.info("Shutdown: flushing dirty data…")
+    try:
+        targets = _flush_targets()
+        for key in list(_dirty):
+            _dirty.discard(key)
+            path, data = targets.get(key, (None, None))
+            if path is None:
+                continue
+            try:
+                save_json(path, data)
+            except Exception as e:
+                logging.warning(f"shutdown flush {key} failed: {e}")
+    except Exception as e:
+        logging.warning(f"shutdown flush error: {e}")
+    try:
+        global _HTTP_SESSION
+        if _HTTP_SESSION and not _HTTP_SESSION.closed:
+            await _HTTP_SESSION.close()
+            logging.info("Shutdown: HTTP session closed")
+    except Exception as e:
+        logging.warning(f"shutdown HTTP close failed: {e}")
+    try:
+        await bot.session.close()
+    except Exception:
+        pass
+
+
+# ─── ЗАПУСК с retry при сетевых сбоях ─────────────────────────────────────────
 
 async def main():
     print("Бот запущен!")
+    await _on_startup()
     asyncio.create_task(follow_up_scheduler())
     asyncio.create_task(disk_flusher())
 
     retry_delay = 5
-    while True:
-        try:
-            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-        except Exception as e:
-            logging.error(f"Polling error: {e}. Reconnect in {retry_delay}s...")
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 60)
-        else:
-            break
+    try:
+        while True:
+            try:
+                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+            except Exception as e:
+                logging.error(f"Polling error: {e}. Reconnect in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)
+            else:
+                break
+    finally:
+        await _on_shutdown()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot stopped by signal")
