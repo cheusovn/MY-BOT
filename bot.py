@@ -215,6 +215,97 @@ class AntiDoubleTap(BaseMiddleware):
 
 dp.callback_query.middleware(AntiDoubleTap())
 
+
+# ─── Анти-флуд / анти-DDoS: лимит сообщений и нажатий на пользователя ─────────
+# Скользящее окно: не более FLOOD_LIMIT событий за FLOOD_WINDOW секунд от одного
+# пользователя. При превышении — пользователь уходит в «остывание» на FLOOD_BLOCK
+# секунд: события молча отбрасываются, один раз показываем мягкое предупреждение.
+# Значения настраиваются через env (FLOOD_LIMIT / FLOOD_WINDOW / FLOOD_BLOCK).
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+FLOOD_LIMIT = _env_int("FLOOD_LIMIT", 10)    # сколько событий допустимо в окне
+FLOOD_WINDOW = _env_int("FLOOD_WINDOW", 10)  # длина окна, секунд
+FLOOD_BLOCK = _env_int("FLOOD_BLOCK", 15)    # длительность остывания, секунд
+
+_flood_hits: dict = {}        # uid -> list[timestamps] в пределах окна
+_flood_block_until: dict = {} # uid -> ts, до которого юзер «остывает»
+_flood_warned: set = set()    # кому уже показали предупреждение в текущем блоке
+
+
+class FloodGuard(BaseMiddleware):
+    """Глобальный лимит частоты обращений (защита от флуда/DDoS).
+
+    Применяется и к message, и к callback_query. Админы не ограничиваются.
+    """
+    async def __call__(self, handler, event, data):
+        uid = event.from_user.id if event.from_user else 0
+        if not uid or is_admin(str(uid)):
+            return await handler(event, data)
+
+        now = time.time()
+
+        # Пользователь сейчас в остывании — молча отбрасываем, предупреждаем один раз
+        until = _flood_block_until.get(uid, 0)
+        if now < until:
+            if uid not in _flood_warned:
+                _flood_warned.add(uid)
+                left = int(until - now) + 1
+                try:
+                    if isinstance(event, CallbackQuery):
+                        await event.answer(
+                            f"Слишком часто 🙂 Подожди {left} сек.", show_alert=False)
+                    else:
+                        await event.answer(
+                            f"⏳ Слишком много сообщений подряд. Передохни {left} сек "
+                            "и продолжим 🙂")
+                except Exception:
+                    pass
+            return
+
+        # Окно остывания истекло — сбрасываем флаги
+        if until:
+            _flood_block_until.pop(uid, None)
+            _flood_warned.discard(uid)
+
+        hits = [t for t in _flood_hits.get(uid, ()) if now - t < FLOOD_WINDOW]
+        hits.append(now)
+        _flood_hits[uid] = hits
+
+        if len(hits) > FLOOD_LIMIT:
+            _flood_block_until[uid] = now + FLOOD_BLOCK
+            _flood_hits.pop(uid, None)
+            logging.warning(f"FloodGuard: пользователь {uid} превысил лимит "
+                            f"{FLOOD_LIMIT}/{FLOOD_WINDOW}s — остывание {FLOOD_BLOCK}s")
+            try:
+                if isinstance(event, CallbackQuery):
+                    await event.answer(
+                        f"Слишком часто 🙂 Подожди {FLOOD_BLOCK} сек.", show_alert=False)
+                else:
+                    await event.answer(
+                        f"⏳ Слишком много сообщений подряд. Передохни {FLOOD_BLOCK} сек "
+                        "и продолжим 🙂")
+                _flood_warned.add(uid)
+            except Exception:
+                pass
+            return
+
+        # Лёгкая периодическая чистка, чтобы словари не росли бесконечно
+        if len(_flood_hits) > 5000:
+            for k in [k for k, ts in _flood_hits.items()
+                      if not ts or now - ts[-1] > FLOOD_WINDOW]:
+                _flood_hits.pop(k, None)
+
+        return await handler(event, data)
+
+
+dp.message.middleware(FloodGuard())
+dp.callback_query.middleware(FloodGuard())
+
 # ─── Анти-повтор тяжёлых операций (генерация, /imgtest) ─────────────────────
 # Команда/сообщение, запускающее долгую AI-операцию, не должно стартовать второй
 # раз, пока первая ещё идёт (при лаге юзер жмёт 2-3 раза → генерировалось 4 раза).
