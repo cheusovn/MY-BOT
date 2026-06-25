@@ -101,6 +101,36 @@ DAY2_COOLDOWN = 12 * 3600  # секунд
 
 logging.basicConfig(level=logging.INFO)
 
+
+# ─── Тише шум о редких сетевых таймаутах getUpdates ──────────────────────────
+# Связь Amvera↔Telegram изредка роняет long-poll по таймауту; aiogram при этом
+# мгновенно переподключается (видно по «Connection established») и не теряет
+# апдейтов (offset не сдвигается). Чтобы эти безобидные строки не спамили лог,
+# троттлим их до одной в LOG_NETERR_INTERVAL секунд. Реальные ошибки и сообщение
+# о восстановлении связи не трогаем.
+class _PollingNoiseFilter(logging.Filter):
+    _last = 0.0
+    try:
+        _interval = max(1, int(os.environ.get("LOG_NETERR_INTERVAL", "300")))
+    except (TypeError, ValueError):
+        _interval = 300
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        # Подавляем только повторяющийся шум о таймауте поллинга и retry-сон
+        if "Failed to fetch updates" in msg or "and try again" in msg:
+            now = time.time()
+            if now - _PollingNoiseFilter._last < _PollingNoiseFilter._interval:
+                return False
+            _PollingNoiseFilter._last = now
+        return True
+
+
+logging.getLogger("aiogram.dispatcher").addFilter(_PollingNoiseFilter())
+
 # ─── Sentry (опционально) ─────────────────────────────────────────────────────
 # Активируется только при наличии SENTRY_DSN. Без env — no-op, нулевой оверхед.
 if os.environ.get("SENTRY_DSN"):
