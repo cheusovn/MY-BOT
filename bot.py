@@ -952,9 +952,6 @@ def wheel_discount_active(uid: str) -> int:
 # ─── МАГАЗИН ЗА XP: тратим опыт на генерации и скидки на курс ───────────────────────────────────────
 # id: (название, цена в XP, тип, значение). type: "gen" даёт N генераций, "disc" — скидку в ₽.
 SHOP_ITEMS = [
-    ("gen3",   "🎨 3 AI-генерации фото",   120, "gen", 3),
-    ("gen5",   "🎨 5 AI-генераций фото",   180, "gen", 5),
-    ("gen10",  "🎨 10 AI-генераций фото",  300, "gen", 10),
     ("disc500",  "💸 Скидка 500 ₽ на курс",  150, "disc", 500),
     ("disc1000", "💸 Скидка 1 000 ₽ на курс", 280, "disc", 1000),
     ("disc2000", "💸 Скидка 2 000 ₽ на курс", 500, "disc", 2000),
@@ -1304,7 +1301,6 @@ def goal_kb():
 def start_kb(uid: str = None):
     # Главный экран: ключевые действия + геймификация сразу на виду.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✨ Оживить своё фото (бесплатно)", callback_data="wow")],
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня курса", callback_data="day1")],
         [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
         [
@@ -1320,7 +1316,6 @@ def start_kb(uid: str = None):
             InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
             InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
         ],
-        [InlineKeyboardButton(text="🧠 Нейросети за XP — генерируй фото", callback_data="neuro")],
         [InlineKeyboardButton(text="🛒 Магазин: обменять опыт на бонусы", callback_data="shop")],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
@@ -1574,11 +1569,11 @@ async def cb_goal(call: CallbackQuery):
     hook = GOAL_HOOKS.get(goal, "")
     text = (
         hook +
-        "✨ <b>Проще один раз увидеть.</b>\n"
-        "Пришли любое фото — и нейросеть его оживит\n"
-        "за минуту. Бесплатно, сам убедишься, что это легко.\n\n"
-        "🎓 А дальше — 2 дня курса бесплатно\n"
-        "или 100+ нейросетей в подарок.\n\n"
+        "✨ <b>Проще один раз попробовать.</b>\n"
+        "Открой 2 дня курса бесплатно — без оплаты и карты.\n"
+        "40 минут, и сам убедишься, что нейросети — это легко.\n\n"
+        "🎁 А в подарок — 100+ нейросетей,\n"
+        "которые рисуют, пишут и монтируют за тебя.\n\n"
         "Что выберешь? 👇"
     )
     await show(call, text, start_kb())
@@ -1670,7 +1665,6 @@ async def cb_day2(call: CallbackQuery):
             "Я напомню сам, как будет готово 🙂\n\n"
             "А пока можно не скучать 👇",
             InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✨ Оживить своё фото (бесплатно)", callback_data="wow")],
                 [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
                 [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
@@ -3103,13 +3097,10 @@ async def cb_shop(call: CallbackQuery):
     user_id = str(call.from_user.id)
     track("shop_open", user_id)
     xp = _ensure_game(user_id).get("xp", 0)
-    credits = gen_credits(user_id)
     text = (
         "🛒 <b>МАГАЗИН ЗА XP</b>\n\n"
-        f"У тебя: <b>{xp} XP</b>"
-        + (f" · 🎨 генераций: <b>{credits}</b>" if credits else "") + "\n\n"
-        "Меняй опыт на бесплатные AI-генерации фото\n"
-        "и реальные скидки на курс. 👇\n\n"
+        f"У тебя: <b>{xp} XP</b>\n\n"
+        "Меняй опыт на реальные скидки на курс. 👇\n\n"
         "💡 XP копится за челлендж дня, уроки, серии и приглашения друзей."
     )
     await show(call, text, shop_kb(user_id))
@@ -4220,19 +4211,6 @@ async def follow_up_scheduler():
                         day1_kb(), "fu_start")
                     continue
 
-                # FU_WOW: так и не попробовал «оживить фото» — через 6ч, мягко
-                if (not data.get("wow_used") and not data.get("fu_wow")
-                        and ts - data.get("start_at", ts) > 6 * 3600):
-                    await _fu_send(uid,
-                        "🤯 <b>Ты ещё не пробовал главное.</b>\n\n"
-                        "Кинь фото — нейросеть превратит его в шедевр\n"
-                        "за минуту. Это бесплатно и правда впечатляет 👇",
-                        InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="🤯 Оживить фото (бесплатно)", callback_data="wow")],
-                            [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
-                        ]), "fu_wow")
-                    continue
-
                 # FU2: 1-й день пройден и прошло 12 ч — 2-й день открылся, зовём продолжить
                 if (stage == "day1" and not data.get("fu_day1")
                         and ts - data.get("day1_at", ts) > DAY2_COOLDOWN):
@@ -4263,7 +4241,7 @@ async def follow_up_scheduler():
                         "🥊 <b>Тебя ждёт новый челлендж дня!</b>\n\n"
                         f"Тема: {challenge_theme()}\n"
                         "Пройди за минуту — получишь +10 XP, а на XP\n"
-                        "в магазине берутся бесплатные генерации и скидки 👇",
+                        "в магазине берутся скидки на курс 👇",
                         InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="🥊 Челлендж дня", callback_data="challenge")],
                             [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
