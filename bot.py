@@ -138,9 +138,12 @@ async def get_http() -> aiohttp.ClientSession:
     return _HTTP_SESSION
 
 
-# Таймаут сессии: при сетевом лаге Amvera↔Telegram запрос отвалится за 30с,
-# а не висит минуту, блокируя ответ (число секунд!).
-_session = AiohttpSession(timeout=30)
+# Long-poll getUpdates держится POLL_TIMEOUT секунд. Клиентский HTTP-таймаут
+# сессии ДОЛЖЕН быть заметно больше long-poll'а, иначе при простое (нет апдейтов)
+# запрос отваливается ровно тогда, когда сервер ещё держит пустой long-poll —
+# отсюда постоянные «TelegramNetworkError: Request timeout». Держим запас ~25с.
+POLL_TIMEOUT = 25
+_session = AiohttpSession(timeout=POLL_TIMEOUT + 25)
 # Принудительный IPv4: на многих облачных хостах (в т.ч. Amvera) попытка IPv6 к
 # api.telegram.org зависает и отваливается только по таймауту (TelegramNetworkError).
 # Форс AF_INET убирает «happy eyeballs» подвисания и резко снижает таймауты.
@@ -4510,7 +4513,11 @@ async def main():
     try:
         while True:
             try:
-                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+                await dp.start_polling(
+                    bot,
+                    polling_timeout=POLL_TIMEOUT,
+                    allowed_updates=dp.resolve_used_update_types(),
+                )
             except Exception as e:
                 logging.error(f"Polling error: {e}. Reconnect in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
