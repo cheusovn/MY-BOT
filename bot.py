@@ -1436,6 +1436,7 @@ def start_kb(uid: str = None):
             InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
             InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
         ],
+        [InlineKeyboardButton(text="📣 Бесплатный канал — гайды и фишки", url=CHANNEL_LINK)],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
 
