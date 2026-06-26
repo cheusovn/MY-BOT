@@ -1429,10 +1429,13 @@ def start_kb(uid: str = None):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня курса", callback_data="day1")],
         [
+            InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Отзывы", callback_data="results"),
+        ],
+        [
+            InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
             InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
         ],
-        [InlineKeyboardButton(text="📚 Мои уроки", callback_data="course")],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
 
