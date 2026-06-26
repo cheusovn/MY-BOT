@@ -1777,10 +1777,12 @@ async def cb_day2(call: CallbackQuery):
             "первого дня улечься — так усвоится в разы лучше.\n\n"
             f"⏳ Откроется через <b>{when}</b> (в {unlock}).\n"
             "Я напомню сам, как будет готово 🙂\n\n"
-            "А пока загляни, что внутри полного курса 👇",
+            "А пока загляни, что внутри полного курса —\n"
+            "или забери бесплатные гайды в канале 👇",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💰 Посмотреть тарифы", callback_data="tariffs")],
                 [InlineKeyboardButton(text="🏆 Отзывы учеников", callback_data="results")],
+                [InlineKeyboardButton(text="📣 Бесплатный канал — гайды", url=CHANNEL_LINK)],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
             ]),
         )
@@ -1806,6 +1808,11 @@ async def cb_day2(call: CallbackQuery):
         + bonus
     )
     mark_day_open(user_id, 2)
+    # Растим аудиторию: один раз мягко зовём в бесплатный канал после трайла.
+    if user_id in users and not users[user_id].get("channel_invited"):
+        users[user_id]["channel_invited"] = True
+        save_users()
+        asyncio.create_task(_send_channel_later(call.from_user.id, delay=600))
     await show_img(call, "day2.jpg", text, day2_kb())
 
 
