@@ -2068,6 +2068,7 @@ async def cb_results(call: CallbackQuery):
     await show_img(call, "results.jpg", text, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Попробовать курс бесплатно (2 дня)", callback_data="day1")],
         [InlineKeyboardButton(text="💰 Смотреть тарифы", callback_data="tariffs")],
+        [InlineKeyboardButton(text="📣 Бесплатный канал — гайды", url=CHANNEL_LINK)],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
 
@@ -2090,6 +2091,7 @@ async def cb_author(call: CallbackQuery):
     )
     await show_img(call, "author_card.jpg", text, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня", callback_data="day1")],
+        [InlineKeyboardButton(text="📣 Бесплатный канал — гайды", url=CHANNEL_LINK)],
         [InlineKeyboardButton(text="💬 Написать Николаю", url=f"https://t.me/{MANAGER.lstrip('@')}")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
@@ -4351,21 +4353,26 @@ async def follow_up_scheduler():
                         f"💚 <b>Напоминаю про твоё предложение.</b>\n\n"
                         f"Осталось мест по акции: {s}.\n"
                         "Доступ к курсу — навсегда, без подписок.\n\n"
-                        "👇 Посмотреть тарифы:",
-                        tariffs_kb(s), "fu_tariffs")
+                        "👇 Посмотреть тарифы (а если пока не готов —\n"
+                        "забери бесплатные гайды в канале):",
+                        InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="💰 Посмотреть тарифы", callback_data="tariffs")],
+                            [InlineKeyboardButton(text="📣 Бесплатные гайды в канале", url=CHANNEL_LINK)],
+                            [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
+                        ]), "fu_tariffs")
                     continue
 
                 # FU_REENGAGE: не заходил 3 дня — зовём ценностью (челлендж + XP), один раз
                 if (not data.get("fu_reengage")
                         and ts - seen > 3 * 24 * 3600):
                     await _fu_send(uid,
-                        "🥊 <b>Тебя ждёт новый челлендж дня!</b>\n\n"
-                        f"Тема: {challenge_theme()}\n"
-                        "Пройди за минуту — получишь +10 XP, а на XP\n"
-                        "в магазине берутся скидки на курс 👇",
+                        "👋 <b>Давно тебя не было!</b>\n\n"
+                        "Нейросети не стоят на месте — и ты не отставай.\n"
+                        "Продолжи бесплатные 2 дня курса или забери\n"
+                        "свежие гайды и промпты в канале 👇",
                         InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="🥊 Челлендж дня", callback_data="challenge")],
-                            [InlineKeyboardButton(text="🛒 Магазин за XP", callback_data="shop")],
+                            [InlineKeyboardButton(text="🎓 Продолжить курс бесплатно", callback_data="day1")],
+                            [InlineKeyboardButton(text="📣 Бесплатные гайды в канале", url=CHANNEL_LINK)],
                             [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
                         ]), "fu_reengage")
                     continue
