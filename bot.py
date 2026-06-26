@@ -1429,13 +1429,10 @@ def start_kb(uid: str = None):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня курса", callback_data="day1")],
         [
-            InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Отзывы", callback_data="results"),
-        ],
-        [
-            InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
             InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
         ],
+        [InlineKeyboardButton(text="📚 Мои уроки", callback_data="course")],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
 
@@ -1501,16 +1498,12 @@ def pay_choice_kb(plan_key: str):
     else:
         rows.append([InlineKeyboardButton(text="💳 Картой РФ через менеджера",
                                           callback_data=f"card_{plan_key}")])
-    if plan_key not in ("test", "day8"):
-        rows.append([InlineKeyboardButton(text="➕ Добавить созвон с куратором +990 ₽",
-                                          callback_data=f"bump_{plan_key}")])
     rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def to_manager_with_bump_kb(plan: str):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить личный созвон с куратором +990 ₽", callback_data=f"bump_{plan}")],
         [InlineKeyboardButton(text="💬 Написать менеджеру — оплата за 2 минуты", url=f"https://t.me/{MANAGER.lstrip('@')}")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
