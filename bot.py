@@ -1423,10 +1423,11 @@ def goal_kb():
 
 
 def start_kb(uid: str = None):
-    # Главный экран: ключевые действия + геймификация сразу на виду.
+    # Главный экран — только то, что ведёт к продаже. Геймификация (челлендж,
+    # прогресс, рейтинг, магазин опыта) и партнёрский «подарок» (вёл на чужого
+    # бота — утечка лида) убраны с продающего пути, чтобы не распылять внимание.
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Начать бесплатно — 2 дня курса", callback_data="day1")],
-        [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
         [
             InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs"),
             InlineKeyboardButton(text="🏆 Отзывы", callback_data="results"),
@@ -1435,12 +1436,6 @@ def start_kb(uid: str = None):
             InlineKeyboardButton(text="📚 Мои уроки", callback_data="course"),
             InlineKeyboardButton(text="👤 Кто ведёт курс", callback_data="author"),
         ],
-        [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
-        [
-            InlineKeyboardButton(text="🎮 Мой прогресс", callback_data="profile"),
-            InlineKeyboardButton(text="🏅 Рейтинг", callback_data="leaderboard"),
-        ],
-        [InlineKeyboardButton(text="🛒 Магазин: обменять опыт на бонусы", callback_data="shop")],
         [InlineKeyboardButton(text="🤝 Позвать друга — 30% тебе", callback_data="referral")],
     ])
 
@@ -1464,7 +1459,7 @@ def day1_kb():
 def day2_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔥 Открыть 2-й день", url=TRIAL_DAY_2)],
-        [InlineKeyboardButton(text="✅ Готово — крутить КОЛЕСО УДАЧИ 🎰", callback_data="wheel")],
+        [InlineKeyboardButton(text="✅ Прошёл — открыть полный курс 👉", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
@@ -1657,12 +1652,12 @@ async def cmd_start(message: Message, state: FSMContext):
 
     text = (
         f"👋 <b>{name}, рад видеть!</b>\n\n"
-        "Помогу разобраться с нейросетями с нуля —\n"
-        "спокойно и по шагам. Будет даже интересно:\n"
-        "проходишь уроки, копишь опыт, открываешь награды.\n\n"
+        "Научу зарабатывать на нейросетях с нуля —\n"
+        "карточки, картинки и видео на заказ.\n"
+        "Первый результат — уже за пару дней.\n\n"
         "🎁 Первые 2 дня — бесплатно, без карты\n"
-        "🎮 За каждый шаг — опыт и небольшие бонусы\n"
-        "💬 Застрянешь — помогу\n\n"
+        "⚡ Готовые промпты — копируй и применяй\n"
+        "💬 Застрянешь — помогу лично\n\n"
         "С чего начнём? Выбери, что тебе ближе 👇"
     )
 
@@ -1695,10 +1690,8 @@ async def cb_goal(call: CallbackQuery):
         hook +
         "✨ <b>Проще один раз попробовать.</b>\n"
         "Открой 2 дня курса бесплатно — без оплаты и карты.\n"
-        "40 минут, и сам убедишься, что нейросети — это легко.\n\n"
-        "🎁 А в подарок — 100+ нейросетей,\n"
-        "которые рисуют, пишут и монтируют за тебя.\n\n"
-        "Что выберешь? 👇"
+        "40 минут — и сам сделаешь первый результат.\n\n"
+        "Поехали? 👇"
     )
     await show(call, text, start_kb())
 
@@ -1787,10 +1780,10 @@ async def cb_day2(call: CallbackQuery):
             "первого дня улечься — так усвоится в разы лучше.\n\n"
             f"⏳ Откроется через <b>{when}</b> (в {unlock}).\n"
             "Я напомню сам, как будет готово 🙂\n\n"
-            "А пока можно не скучать 👇",
+            "А пока загляни, что внутри полного курса 👇",
             InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🥊 Челлендж дня (+10 XP)", callback_data="challenge")],
-                [InlineKeyboardButton(text="🎁 100+ нейросетей в подарок", callback_data="free_gift")],
+                [InlineKeyboardButton(text="💰 Посмотреть тарифы", callback_data="tariffs")],
+                [InlineKeyboardButton(text="🏆 Отзывы учеников", callback_data="results")],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
             ]),
         )
@@ -2070,7 +2063,6 @@ async def cb_results(call: CallbackQuery):
     )
     await show_img(call, "results.jpg", text, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 Попробовать курс бесплатно (2 дня)", callback_data="day1")],
-        [InlineKeyboardButton(text="🔥 Подарок — 100+ нейросетей", callback_data="free_gift")],
         [InlineKeyboardButton(text="💰 Смотреть тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ]))
@@ -2991,9 +2983,10 @@ def wow_cancel_kb():
 
 
 def wow_used_kb():
+    # Горячий момент — ведём на курс, а не на сторонний бот.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 100+ нейросетей — забрать бесплатно", url=GIFT_LINK)],
-        [InlineKeyboardButton(text="🚀 2 дня курса бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="🚀 Открыть 2 дня курса бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
@@ -3056,10 +3049,10 @@ async def _send_channel_later(uid: int, delay: int = 300):
 
 
 def wow_sell_kb():
-    """После результата: продаём — GIFT-бот (партнёрка) + курс."""
+    """После результата — горячий момент, продаём курс (без увода на сторонний бот)."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 100+ нейросетей — возможностей в 100 раз больше", url=GIFT_LINK)],
-        [InlineKeyboardButton(text="🚀 2 дня курса бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="🚀 Хочу так же — 2 дня курса бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
