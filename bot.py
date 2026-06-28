@@ -4775,6 +4775,83 @@ async def follow_up_scheduler():
                             ]), "fu_d3")
                         continue
 
+                # ── DAY2-воронка: прошёл 2 дня, не купил ────────────────────
+                d2_at = data.get("day2_at", 0)
+                if d2_at and not bought and stage not in ("paid", "checkout"):
+                    elapsed2 = ts - d2_at
+                    name = data.get("name", "").split()[0] if data.get("name", "")[:1].isalpha() else ""
+                    hi = f", {name}" if name else ""
+
+                    # P1: +1ч — горячий момент, сразу после дня 2
+                    if elapsed2 > 3600 and not data.get("fu_p1"):
+                        await _fu_send(uid,
+                            f"Привет{hi}! 🔥\n\n"
+                            "Ты прошёл оба бесплатных дня — и это не случайно.\n\n"
+                            "Люди, которые доходят до этой точки,\n"
+                            "обычно уже понимают: это реально работает.\n\n"
+                            "Полный курс — ещё 6 дней практики:\n"
+                            "▸ персонажи и сториборды\n"
+                            "▸ AI-видео и звук\n"
+                            "▸ где брать заказы и сколько платят\n\n"
+                            f"Осталось <b>{s} мест</b> по акционной цене 👇",
+                            InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="💰 Выбрать тариф и продолжить",
+                                                      callback_data="tariffs")],
+                                [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")],
+                            ]), "fu_p1")
+                        continue
+
+                    # P2: +6ч — снятие главного возражения («дорого»)
+                    if elapsed2 > 6 * 3600 and not data.get("fu_p2"):
+                        await _fu_send(uid,
+                            f"Привет{hi} 🙂\n\n"
+                            "Ты видел полный курс — и возможно подумал:\n"
+                            "<i>«Дорого»</i> или <i>«Надо подумать»</i>.\n\n"
+                            "Давай честно о деньгах:\n"
+                            "Один заказ на AI-контент — от <b>800 до 2 500 ₽</b>.\n"
+                            "Курс окупается с <b>2–3 первых заказов</b>.\n\n"
+                            "Это не трата — это инвестиция в навык,\n"
+                            "который работает годами.\n\n"
+                            f"<b>{s} мест</b> осталось по акции 👇",
+                            InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="💰 Посмотреть тарифы", callback_data="tariffs")],
+                                [InlineKeyboardButton(text="💬 Спросить менеджера",
+                                                      url=f"https://t.me/{MANAGER.lstrip('@')}")],
+                            ]), "fu_p2")
+                        continue
+
+                    # P3: +24ч — социальное доказательство + дедлайн
+                    if elapsed2 > 24 * 3600 and not data.get("fu_p3"):
+                        await _fu_send(uid,
+                            f"Привет{hi}!\n\n"
+                            "Сутки прошли — и я думаю, ты всё ещё взвешиваешь.\n\n"
+                            "Вот что говорят те, кто решился:\n"
+                            "<i>«Не думала, что так быстро начну делать\n"
+                            "нормальный контент» — Света, 3 недели на курсе</i>\n\n"
+                            "<i>«Окупил за первый заказ на фрилансе» — Влад</i>\n\n"
+                            f"Осталось <b>{s} мест</b>. Потом дороже — без исключений.\n\n"
+                            "Твой момент — сейчас 👇",
+                            InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="🚀 Забрать место по акции",
+                                                      callback_data="tariffs")],
+                            ]), "fu_p3")
+                        continue
+
+                    # P4: +72ч — последний мягкий дожим
+                    if elapsed2 > 72 * 3600 and not data.get("fu_p4"):
+                        await _fu_send(uid,
+                            f"Привет{hi}, последний раз 🙂\n\n"
+                            "Ты прошёл 2 дня курса бесплатно.\n"
+                            "Навык освоен — осталось только довести до конца.\n\n"
+                            "Если вдруг не время — ок, понимаю.\n"
+                            "Напишу тебе, если появится скидка или бонус.\n\n"
+                            "А если всё-таки готов — жми 👇",
+                            InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="💰 Выбрать тариф", callback_data="tariffs")],
+                                [InlineKeyboardButton(text="📣 Бесплатный канал", url=CHANNEL_LINK)],
+                            ]), "fu_p4")
+                        continue
+
                 # ── START-воронка ─────────────────────────────────────────────
                 s_at = data.get("start_at", 0)
                 if stage == "start" and not bought and s_at:
