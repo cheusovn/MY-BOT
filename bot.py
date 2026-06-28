@@ -1387,6 +1387,7 @@ def badge_toast(badge_id: str) -> str:
 
 class BroadcastState(StatesGroup):
     waiting = State()
+    segment_waiting = State()  # ждём текст для конкретного сегмента
 
 
 class ChallengeState(StatesGroup):
@@ -4043,7 +4044,8 @@ def build_recent_users_text(n: int = 15) -> str:
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="🎯 Сегментная рассылка", callback_data="adm_seg_menu")],
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="adm_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats")],
         [InlineKeyboardButton(text="💸 Рефералы", callback_data="adm_refs")],
         [InlineKeyboardButton(text="💰 Платежи", callback_data="adm_pays")],
@@ -4247,6 +4249,286 @@ async def process_broadcast(message: Message, state: FSMContext):
         except Exception:
             failed += 1
     await message.answer(f"✅ Рассылка: {sent} отпр. / {failed} провал.")
+
+
+# ─── СЕГМЕНТНАЯ РАССЫЛКА ─────────────────────────────────────────────────────
+# Продающие тексты под каждый сегмент воронки.
+# Психология: A=любопытство, B=прогресс+потеря, C=дефицит+снятие страха, D=личный дожим.
+
+def _seg_users(segment: str) -> list:
+    """Возвращает список uid для сегмента воронки."""
+    result = []
+    for uid, d in users.items():
+        stage = d.get("stage", "start")
+        if segment == "start":
+            # Зарегистрировались, но не открыли даже день 1
+            if stage == "start" and not d.get("day1_at"):
+                result.append(uid)
+        elif segment == "day1":
+            # Открыли день 1, не дошли до дня 2 и не купили
+            if d.get("day1_at") and not d.get("day2_at") and not d.get("plan") and stage == "day1":
+                result.append(uid)
+        elif segment == "tariffs":
+            # Видели тарифы, не перешли в checkout и не купили
+            if stage == "tariffs" and not d.get("plan"):
+                result.append(uid)
+        elif segment == "checkout":
+            # Дошли до оплаты, не завершили
+            if stage == "checkout" and not d.get("plan"):
+                result.append(uid)
+    return result
+
+
+def _seg_label(segment: str) -> str:
+    return {
+        "start":    "😴 Не открыли день 1",
+        "day1":     "📖 Застряли на дне 1",
+        "tariffs":  "💰 Видели тарифы — не купили",
+        "checkout": "🔥 Чуть не оплатили",
+    }.get(segment, segment)
+
+
+# Готовые продающие тексты под каждый сегмент.
+# Подставляем {name} если есть, {spots} — текущее кол-во мест.
+CAMPAIGN_TEXTS = {
+    "start": (
+        "Привет{name_part}! 👋\n\n"
+        "Ты заглядывал к нам в бот — но так и не открыл первый урок.\n\n"
+        "Понимаю: откладывать легко. Но пока ты думаешь — "
+        "другие уже делают первые шаги в AI.\n\n"
+        "Расскажу честно: первый урок занимает <b>20 минут</b>. "
+        "Не нужно ничего скачивать, платить или готовиться.\n\n"
+        "Просто нажми кнопку ниже — и посмотри. "
+        "Если не зайдёт — ничего не теряешь. "
+        "Если зайдёт — поймёшь, почему за это платят деньги 👇"
+    ),
+    "day1": (
+        "Привет{name_part}! 🙂\n\n"
+        "Ты открыл первый урок — значит искра есть.\n\n"
+        "Знаешь, где большинство останавливается? "
+        "Именно здесь. Посмотрели — и отвлеклись.\n\n"
+        "А второй день — это где происходит настоящее волшебство: "
+        "ты <b>сам своими руками</b> делаешь первый AI-контент. "
+        "Не смотришь видео. Именно делаешь.\n\n"
+        "И именно после этого момента люди говорят:\n"
+        "<i>«Ого, я не знал, что это так просто»</i> 😮\n\n"
+        "Второй день — <b>бесплатно</b>. Уходит 20 минут. "
+        "Жми 👇"
+    ),
+    "tariffs": (
+        "Привет{name_part} 👋\n\n"
+        "Ты смотрел тарифы — и что-то остановило.\n\n"
+        "Расскажу, что обычно останавливает людей:\n"
+        "<i>«А вдруг не подойдёт?»</i>\n"
+        "<i>«Сначала ещё подумаю»</i>\n"
+        "<i>«Дорого»</i>\n\n"
+        "Честный ответ: первые 2 дня ты смотришь бесплатно — "
+        "без карты и обязательств. "
+        "Если не понравится — просто не покупаешь.\n\n"
+        "Но вот что важно: сейчас осталось <b>{spots} мест</b> по акционной цене. "
+        "Как только они закончатся — цена вернётся к полной.\n\n"
+        "Нажми — я держу место для тебя 👇"
+    ),
+    "checkout": (
+        "Привет{name_part} 👋\n\n"
+        "Ты был в шаге от старта — и что-то остановило.\n\n"
+        "Если вопрос в оплате, удобстве или ты просто хочешь "
+        "уточнить детали — напиши мне напрямую: {manager}\n\n"
+        "Я лично отвечу и помогу разобраться.\n\n"
+        "Твоё место пока держится. "
+        "Но <b>осталось {spots} мест</b> по этой цене — "
+        "после них цена поднимется.\n\n"
+        "Жми — продолжим там, где остановился 👇"
+    ),
+}
+
+CAMPAIGN_KBS = {
+    "start": lambda: InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Открыть первый урок", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Посмотреть тарифы", callback_data="tariffs")],
+    ]),
+    "day1": lambda: InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔥 Открыть второй урок", url=TRIAL_DAY_2)],
+        [InlineKeyboardButton(text="✅ Уже прошёл → к тарифам", callback_data="tariffs")],
+    ]),
+    "tariffs": lambda: InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Начать бесплатно", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Выбрать тариф", callback_data="tariffs")],
+    ]),
+    "checkout": lambda: InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Продолжить оплату", callback_data="tariffs")],
+        [InlineKeyboardButton(text="💬 Написать менеджеру", url=f"https://t.me/{MANAGER.lstrip('@')}")],
+    ]),
+}
+
+
+def _build_campaign_text(segment: str, uid: str) -> str:
+    tpl = CAMPAIGN_TEXTS[segment]
+    name = users.get(uid, {}).get("name", "")
+    name_part = f", {name.split()[0]}" if name and name[0].isalpha() else ""
+    return tpl.format(name_part=name_part, spots=get_spots(), manager=MANAGER)
+
+
+def _seg_menu_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for seg in ("start", "day1", "tariffs", "checkout"):
+        cnt = len(_seg_users(seg))
+        label = _seg_label(seg)
+        rows.append([InlineKeyboardButton(
+            text=f"{label} ({cnt} чел.)",
+            callback_data=f"adm_seg_{seg}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _seg_confirm_kb(segment: str) -> InlineKeyboardMarkup:
+    cnt = len(_seg_users(segment))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"🚀 Отправить готовый текст ({cnt} чел.)",
+            callback_data=f"adm_seg_fire_{segment}",
+        )],
+        [InlineKeyboardButton(
+            text="✏️ Написать свой текст",
+            callback_data=f"adm_seg_custom_{segment}",
+        )],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_seg_menu")],
+    ])
+
+
+@dp.callback_query(lambda c: c.data == "adm_seg_menu")
+async def cb_adm_seg_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await call.answer()
+    await call.message.answer(
+        "🎯 <b>Сегментная рассылка</b>\n\n"
+        "Выбери аудиторию — каждой пойдёт свой продающий текст:",
+        reply_markup=_seg_menu_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("adm_seg_") and not c.data.startswith("adm_seg_fire_") and not c.data.startswith("adm_seg_custom_") and c.data != "adm_seg_menu")
+async def cb_adm_seg_preview(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer()
+        return
+    segment = call.data[len("adm_seg_"):]
+    if segment not in CAMPAIGN_TEXTS:
+        await call.answer()
+        return
+    await call.answer()
+    uids = _seg_users(segment)
+    # показываем превью текста на примере первого юзера сегмента
+    sample_uid = uids[0] if uids else str(call.from_user.id)
+    preview = _build_campaign_text(segment, sample_uid)
+    await call.message.answer(
+        f"<b>Сегмент:</b> {_seg_label(segment)}\n"
+        f"<b>Аудитория:</b> {len(uids)} чел.\n\n"
+        f"<b>Превью сообщения:</b>\n\n{preview}",
+        reply_markup=_seg_confirm_kb(segment),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("adm_seg_fire_"))
+async def cb_adm_seg_fire(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer()
+        return
+    segment = call.data[len("adm_seg_fire_"):]
+    if segment not in CAMPAIGN_TEXTS:
+        await call.answer()
+        return
+    await call.answer("Отправляю…")
+    uids = _seg_users(segment)
+    kb = CAMPAIGN_KBS[segment]()
+    sent = failed = 0
+    for uid in uids:
+        try:
+            text = _build_campaign_text(segment, uid)
+            await bot.send_message(int(uid), text, reply_markup=kb)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+    await call.message.answer(
+        f"✅ <b>Рассылка сегмента «{_seg_label(segment)}» завершена</b>\n\n"
+        f"Отправлено: <b>{sent}</b>\nНе доставлено: <b>{failed}</b>",
+        reply_markup=admin_back_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("adm_seg_custom_"))
+async def cb_adm_seg_custom(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer()
+        return
+    segment = call.data[len("adm_seg_custom_"):]
+    if segment not in CAMPAIGN_TEXTS:
+        await call.answer()
+        return
+    await call.answer()
+    await state.set_state(BroadcastState.segment_waiting)
+    await state.update_data(seg=segment)
+    uids = _seg_users(segment)
+    await call.message.answer(
+        f"✏️ Напиши текст для сегмента <b>{_seg_label(segment)}</b> ({len(uids)} чел.)\n\n"
+        f"HTML-теги поддерживаются. Отмена: /cancel"
+    )
+
+
+@dp.message(BroadcastState.segment_waiting)
+async def process_segment_broadcast(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    segment = data.get("seg", "start")
+    await state.clear()
+    text = message.text or message.caption or ""
+    kb = CAMPAIGN_KBS.get(segment, lambda: start_kb())()
+    uids = _seg_users(segment)
+    sent = failed = 0
+    for uid in uids:
+        try:
+            await bot.send_message(int(uid), text, reply_markup=kb)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+    await message.answer(
+        f"✅ Рассылка сегмента «{_seg_label(segment)}» завершена\n"
+        f"Отправлено: {sent} / Провал: {failed}",
+    )
+
+
+@dp.message(Command("campaign"))
+async def cmd_campaign(message: Message):
+    """Быстрый запуск: /campaign start|day1|tariffs|checkout"""
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2 or args[1] not in CAMPAIGN_TEXTS:
+        segs = ", ".join(CAMPAIGN_TEXTS.keys())
+        await message.answer(f"Формат: /campaign <сегмент>\nСегменты: {segs}")
+        return
+    segment = args[1]
+    uids = _seg_users(segment)
+    kb = CAMPAIGN_KBS[segment]()
+    sent = failed = 0
+    for uid in uids:
+        try:
+            text = _build_campaign_text(segment, uid)
+            await bot.send_message(int(uid), text, reply_markup=kb)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+    await message.answer(
+        f"✅ Кампания <b>{_seg_label(segment)}</b> запущена\n"
+        f"Отправлено: <b>{sent}</b> / Провал: <b>{failed}</b>"
+    )
 
 
 @dp.message(Command("promo"))
