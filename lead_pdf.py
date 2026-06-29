@@ -7,9 +7,32 @@ _DIR = os.path.dirname(__file__)
 LEAD_PDF_PATH = os.path.join(_DIR, "lead_magnet.pdf")
 _FONT_REGULAR = os.path.join(_DIR, "DejaVuSans.ttf")
 _FONT_BOLD = os.path.join(_DIR, "DejaVuSans-Bold.ttf")
+
+# System font search paths (Ubuntu/Debian/Alpine — Amvera)
+_SYS_REGULAR_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+]
+_SYS_BOLD_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+]
+
 _FONT_URLS = {
-    _FONT_REGULAR: "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
-    _FONT_BOLD:    "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf",
+    _FONT_REGULAR: [
+        "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts@master/ttf/DejaVuSans.ttf",
+        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf",
+    ],
+    _FONT_BOLD: [
+        "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts@master/ttf/DejaVuSans-Bold.ttf",
+        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans-Bold.ttf",
+    ],
 }
 
 AGENTS = [
@@ -111,11 +134,36 @@ AGENTS = [
 ]
 
 
+def _find_system_font(candidates):
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def _ensure_fonts():
-    for path, url in _FONT_URLS.items():
-        if not os.path.exists(path):
-            logging.info(f"Скачиваю шрифт: {url}")
-            urllib.request.urlretrieve(url, path)
+    import shutil
+    pairs = [
+        (_FONT_REGULAR, _SYS_REGULAR_CANDIDATES, _FONT_URLS[_FONT_REGULAR]),
+        (_FONT_BOLD,    _SYS_BOLD_CANDIDATES,    _FONT_URLS[_FONT_BOLD]),
+    ]
+    for local, sys_candidates, urls in pairs:
+        if os.path.exists(local):
+            continue
+        sys_font = _find_system_font(sys_candidates)
+        if sys_font:
+            shutil.copy(sys_font, local)
+            logging.info(f"Скопирован системный шрифт: {sys_font}")
+            continue
+        for url in urls:
+            try:
+                logging.info(f"Скачиваю шрифт: {url}")
+                urllib.request.urlretrieve(url, local)
+                if os.path.getsize(local) > 100_000:
+                    break
+                os.remove(local)
+            except Exception as e:
+                logging.warning(f"Не удалось скачать {url}: {e}")
 
 
 def generate() -> str:

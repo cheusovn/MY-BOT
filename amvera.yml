@@ -9,7 +9,7 @@ build:
   useCache: true
 run:
   scriptName: null
-  command: python bot.py
+  command: apt-get install -y fonts-dejavu-core 2>/dev/null || true && python bot.py
   persistenceMount: /data
   containerPort: 80
   servicePort: 80
