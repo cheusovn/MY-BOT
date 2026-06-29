@@ -83,6 +83,7 @@ DAY_TITLES = {
 }
 GIFT_LINK = "https://t.me/syntxaibot?start=aff_817730727"
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
+CHANNEL_USERNAME = "trueman_ai"
 MANAGER = "@nikolay_cheusov"
 
 # ─── Реферальный баланс (₽) ─────────────────────────────────────────────────
@@ -1651,30 +1652,29 @@ async def cmd_start(message: Message, state: FSMContext):
     # ── Deeplink: лид-магнит (?start=lead) ──────────────────────────────────
     if payload == "lead":
         track("lead_magnet", user_id)
-        lead_text = (
-            "🎁 <b>Держи подборку — 8 нейросетей,\n"
-            "которые ведут мой Instagram на автопилоте:</b>\n\n"
-            "1️⃣ <b>Аналитик</b> — еженедельный отчёт по охватам и вовлечённости\n"
-            "2️⃣ <b>Разведчик</b> — мониторит конкурентов и находит залетевший контент\n"
-            "3️⃣ <b>Трендвотчер</b> — каждое утро свежие тренды в нише\n"
-            "4️⃣ <b>Копирайтер</b> — хуки, описания, хештеги, CTA\n"
-            "5️⃣ <b>Планер</b> — контент-план на неделю за 2 минуты\n"
-            "6️⃣ <b>Дизайнер</b> — карусели и визуал через Nano Banana 2\n"
-            "7️⃣ <b>Воронка</b> — превращает подписчиков в покупателей\n"
-            "8️⃣ <b>Финансист</b> — считает ROI и показывает где теряем деньги\n\n"
-            "💡 <b>Всё это работает без команды и без бюджета.</b>\n"
-            "Один человек + AI = целый отдел.\n\n"
-            "🔥 Хочешь научиться собирать таких агентов?\n"
-            "На курсе TRUE AI ACADEMY за 7 дней покажу как —\n"
-            "первые 2 дня бесплатно 👇"
-        )
-        lead_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎓 Попробовать бесплатно — 2 дня", callback_data="day1")],
-            [InlineKeyboardButton(text="💰 Все тарифы", callback_data="tariffs")],
-            [InlineKeyboardButton(text="📣 Канал с гайдами", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
-        ])
-        await message.answer(lead_text, reply_markup=lead_kb)
+        subscribed = False
+        try:
+            member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", int(user_id))
+            subscribed = member.status in ("member", "administrator", "creator")
+        except Exception:
+            pass
+
+        if not subscribed:
+            gate_text = (
+                "🎁 <b>У меня для тебя подборка:</b>\n"
+                "8 нейросетей, которые ведут мой Instagram\n"
+                "на полном автопилоте.\n\n"
+                "Чтобы получить — подпишись на канал 👇\n"
+                "и нажми «✅ Я подписался»"
+            )
+            gate_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📣 Подписаться на канал", url=CHANNEL_LINK)],
+                [InlineKeyboardButton(text="✅ Я подписался — забрать подборку", callback_data="check_lead_sub")],
+            ])
+            await message.answer(gate_text, reply_markup=gate_kb)
+            return
+
+        await _send_lead_magnet(message.from_user.id)
         return
 
     text = (
@@ -1702,6 +1702,53 @@ async def cmd_start(message: Message, state: FSMContext):
     elif is_new:
         logging.warning(f"welcome photo not found at {WELCOME_IMG}")
     await message.answer(text, reply_markup=goal_kb())
+
+
+async def _send_lead_magnet(chat_id: int):
+    """Отправляет лид-магнит — подборку 8 AI-агентов + CTA на курс."""
+    lead_text = (
+        "🎁 <b>Держи подборку — 8 нейросетей,\n"
+        "которые ведут мой Instagram на автопилоте:</b>\n\n"
+        "1️⃣ <b>Аналитик</b> — еженедельный отчёт по охватам и вовлечённости\n"
+        "2️⃣ <b>Разведчик</b> — мониторит конкурентов и находит залетевший контент\n"
+        "3️⃣ <b>Трендвотчер</b> — каждое утро свежие тренды в нише\n"
+        "4️⃣ <b>Копирайтер</b> — хуки, описания, хештеги, CTA\n"
+        "5️⃣ <b>Планер</b> — контент-план на неделю за 2 минуты\n"
+        "6️⃣ <b>Дизайнер</b> — карусели и визуал через Nano Banana 2\n"
+        "7️⃣ <b>Воронка</b> — превращает подписчиков в покупателей\n"
+        "8️⃣ <b>Финансист</b> — считает ROI и показывает где теряем деньги\n\n"
+        "💡 <b>Всё это работает без команды и без бюджета.</b>\n"
+        "Один человек + AI = целый отдел.\n\n"
+        "🔥 Хочешь научиться собирать таких агентов?\n"
+        "На курсе TRUE AI ACADEMY за 7 дней покажу как —\n"
+        "первые 2 дня бесплатно 👇"
+    )
+    lead_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Попробовать бесплатно — 2 дня", callback_data="day1")],
+        [InlineKeyboardButton(text="💰 Все тарифы", callback_data="tariffs")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])
+    await bot.send_message(chat_id, lead_text, reply_markup=lead_kb)
+
+
+@dp.callback_query(lambda c: c.data == "check_lead_sub")
+async def cb_check_lead_sub(call: CallbackQuery):
+    """Проверяет подписку на канал и выдаёт лид-магнит."""
+    user_id = str(call.from_user.id)
+    subscribed = False
+    try:
+        member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", call.from_user.id)
+        subscribed = member.status in ("member", "administrator", "creator")
+    except Exception:
+        pass
+
+    if not subscribed:
+        await call.answer("❌ Ты ещё не подписался на канал. Подпишись и нажми снова!", show_alert=True)
+        return
+
+    await call.answer("✅ Подписка подтверждена!")
+    track("lead_magnet_unlocked", user_id)
+    await _send_lead_magnet(call.from_user.id)
 
 
 @dp.callback_query(lambda c: c.data.startswith("goal_"))
