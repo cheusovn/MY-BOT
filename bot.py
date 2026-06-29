@@ -1660,13 +1660,15 @@ async def cmd_start(message: Message, state: FSMContext):
     if payload == "lead":
         track("lead_magnet", user_id)
         subscribed = False
+        can_check = True
         try:
             member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", int(user_id))
             subscribed = member.status in ("member", "administrator", "creator")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"get_chat_member failed (bot not admin?): {e} — skipping gate")
+            can_check = False
 
-        if not subscribed:
+        if not subscribed and can_check:
             gate_text = (
                 "🎁 <b>У меня для тебя подборка:</b>\n"
                 "8 нейросетей, которые ведут мой Instagram\n"
@@ -1752,13 +1754,15 @@ async def cb_check_lead_sub(call: CallbackQuery):
     """Проверяет подписку на канал и выдаёт лид-магнит."""
     user_id = str(call.from_user.id)
     subscribed = False
+    can_check = True
     try:
         member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", call.from_user.id)
         subscribed = member.status in ("member", "administrator", "creator")
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"check_lead_sub: get_chat_member failed: {e} — skipping gate")
+        can_check = False
 
-    if not subscribed:
+    if not subscribed and can_check:
         await call.answer("❌ Ты ещё не подписался на канал. Подпишись и нажми снова!", show_alert=True)
         return
 
