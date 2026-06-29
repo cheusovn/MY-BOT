@@ -9,3 +9,5 @@ sentry-sdk>=2.18.0
 # Optional: Redis-FSM для сохранения состояний между рестартами — активируется через REDIS_URL.
 # Без env используется MemoryStorage (как раньше).
 redis>=5.1.1
+# PDF-генерация для лид-магнита (поддержка TTF/Unicode).
+fpdf2>=2.7.9
