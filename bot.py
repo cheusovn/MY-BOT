@@ -5193,29 +5193,45 @@ async def _handle_socialapi_webhook(request):
             comment_id = comment.get("id", "")
             post_id = comment.get("post_id", "")
             author = comment.get("author", {}).get("username", "")
+            # берём account_id из события — работает для Instagram, Threads, Facebook
+            account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
+            platform = comment.get("platform") or data.get("platform") or "instagram"
 
             if KEYWORD_TRIGGER in text and SOCIALAPI_KEY:
                 async with aiohttp.ClientSession() as s:
                     headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
                     base = "https://api.social-api.ai/v2"
                     await s.post(f"{base}/comments/reply", headers=headers, json={
-                        "account_id": SOCIALAPI_ACCOUNT_ID,
+                        "account_id": account_id,
                         "post_id": post_id,
                         "comment_id": comment_id,
                         "text": f"@{author} Отправил в личку! 🔥"
                     })
-                    await s.post(f"{base}/comments/private-reply", headers=headers, json={
-                        "account_id": SOCIALAPI_ACCOUNT_ID,
-                        "post_id": post_id,
-                        "comment_id": comment_id,
-                        "text": (
-                            f"Привет, {author}! 👋\n\n"
-                            "Держи подборку — 8 нейросетей, которые ведут мой Instagram на автопилоте.\n\n"
-                            f"Переходи в бот 👉 {LEAD_BOT_LINK}\n\n"
-                            "Подпишись на канал и забирай гайд бесплатно 🎁"
-                        )
-                    })
-                logging.info(f"SocialAPI: replied to @{author} (keyword '{KEYWORD_TRIGGER}')")
+                    # DM через Instagram; Threads/Facebook не поддерживают private reply — шлём обычный ответ
+                    if platform == "instagram":
+                        await s.post(f"{base}/comments/private-reply", headers=headers, json={
+                            "account_id": account_id,
+                            "post_id": post_id,
+                            "comment_id": comment_id,
+                            "text": (
+                                f"Привет, {author}! 👋\n\n"
+                                "Держи подборку — 8 нейросетей, которые ведут мой Instagram на автопилоте.\n\n"
+                                f"Переходи в бот 👉 {LEAD_BOT_LINK}\n\n"
+                                "Подпишись на канал и забирай гайд бесплатно 🎁"
+                            )
+                        })
+                    else:
+                        # Threads/Facebook — ссылку на бот добавляем прямо в публичный ответ
+                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                            "account_id": account_id,
+                            "post_id": post_id,
+                            "comment_id": comment_id,
+                            "text": (
+                                f"@{author} Держи ссылку 👉 {LEAD_BOT_LINK} — "
+                                "подпишись на канал и забирай гайд бесплатно 🎁"
+                            )
+                        })
+                logging.info(f"SocialAPI: replied to @{author} on {platform} (keyword '{KEYWORD_TRIGGER}')")
         return web.json_response({"ok": True})
     except Exception as e:
         logging.exception(f"SocialAPI webhook error: {e}")
