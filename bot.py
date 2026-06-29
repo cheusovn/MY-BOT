@@ -86,6 +86,13 @@ CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 CHANNEL_USERNAME = "trueman_ai"
 MANAGER = "@nikolay_cheusov"
 
+# ─── SocialAPI (Instagram webhook) ─────────────────────────────────────────────
+SOCIALAPI_KEY = os.environ.get("SOCIALAPI_KEY", "")
+SOCIALAPI_ACCOUNT_ID = os.environ.get("SOCIALAPI_ACCOUNT_ID", "acc_01KW8ZNMXZJ15KXBKZVCJF4ENB")
+SOCIALAPI_WEBHOOK_SECRET = os.environ.get("SOCIALAPI_WEBHOOK_SECRET", "")
+KEYWORD_TRIGGER = "АГЕНТЫ"
+LEAD_BOT_LINK = "https://t.me/Trueman_ai_bot?start=lead"
+
 # ─── Реферальный баланс (₽) ─────────────────────────────────────────────────
 REF_PERCENT = 30        # % с оплаты приглашённого друга → на баланс пригласившего
 REF_MIN_PAYOUT = 2000   # минимальная сумма вывода на карту, ₽
@@ -5164,6 +5171,57 @@ async def cb_fallback_anything(message: Message):
 # Без env HEALTH_PORT (default 80) — пытаемся 80, при OSError молча пропускаем
 # (например, локально без прав на 80).
 
+async def _handle_socialapi_webhook(request):
+    """Обработка webhook от SocialAPI — comment.received."""
+    from aiohttp import web
+    import hashlib, hmac as _hmac
+    try:
+        body = await request.read()
+        if SOCIALAPI_WEBHOOK_SECRET:
+            sig = request.headers.get("X-Signature", "")
+            expected = _hmac.new(SOCIALAPI_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+            if not _hmac.compare_digest(sig, expected):
+                logging.warning("SocialAPI webhook: invalid signature")
+                return web.json_response({"error": "invalid signature"}, status=401)
+        data = json.loads(body)
+        event_type = data.get("type", "")
+        logging.info(f"SocialAPI webhook: {event_type}")
+
+        if event_type == "comment.received":
+            comment = data.get("data", {})
+            text = (comment.get("text") or "").strip().upper()
+            comment_id = comment.get("id", "")
+            post_id = comment.get("post_id", "")
+            author = comment.get("author", {}).get("username", "")
+
+            if KEYWORD_TRIGGER in text and SOCIALAPI_KEY:
+                async with aiohttp.ClientSession() as s:
+                    headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
+                    base = "https://api.social-api.ai/v2"
+                    await s.post(f"{base}/comments/reply", headers=headers, json={
+                        "account_id": SOCIALAPI_ACCOUNT_ID,
+                        "post_id": post_id,
+                        "comment_id": comment_id,
+                        "text": f"@{author} Отправил в личку! 🔥"
+                    })
+                    await s.post(f"{base}/comments/private-reply", headers=headers, json={
+                        "account_id": SOCIALAPI_ACCOUNT_ID,
+                        "post_id": post_id,
+                        "comment_id": comment_id,
+                        "text": (
+                            f"Привет, {author}! 👋\n\n"
+                            "Держи подборку — 8 нейросетей, которые ведут мой Instagram на автопилоте.\n\n"
+                            f"Переходи в бот 👉 {LEAD_BOT_LINK}\n\n"
+                            "Подпишись на канал и забирай гайд бесплатно 🎁"
+                        )
+                    })
+                logging.info(f"SocialAPI: replied to @{author} (keyword '{KEYWORD_TRIGGER}')")
+        return web.json_response({"ok": True})
+    except Exception as e:
+        logging.exception(f"SocialAPI webhook error: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def _start_healthcheck():
     try:
         from aiohttp import web
@@ -5175,14 +5233,14 @@ async def _start_healthcheck():
         app = web.Application()
         app.router.add_get("/", health)
         app.router.add_get("/health", health)
+        app.router.add_post("/webhook/socialapi", _handle_socialapi_webhook)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        logging.info(f"Healthcheck listening on :{port}")
+        logging.info(f"Healthcheck + webhook listening on :{port}")
         return runner
     except OSError as e:
-        # Порт занят/нет прав — для разработки норм, в Amvera root и 80 свободен.
         logging.warning(f"Healthcheck not started: {e}")
     except Exception as e:
         logging.warning(f"Healthcheck setup failed: {e}")
