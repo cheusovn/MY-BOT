@@ -1697,9 +1697,10 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         return
 
-    # ── Deeplink: лид-магнит (?start=lead) ──────────────────────────────────
-    if payload == "lead":
-        track("lead_magnet", user_id)
+    # ── Deeplink: лид-магнит (?start=lead или ?start=lead_*) ────────────────
+    if payload == "lead" or payload.startswith("lead_"):
+        lead_code = payload  # "lead" или "lead_agents", "lead_prompts", ...
+        track(f"lead_magnet_{lead_code}", user_id)
         subscribed = False
         can_check = True
         try:
@@ -1710,21 +1711,22 @@ async def cmd_start(message: Message, state: FSMContext):
             can_check = False
 
         if not subscribed and can_check:
+            # Получаем название лид-магнита из реестра
+            lead_title = _get_lead_title(lead_code)
             gate_text = (
-                "🎁 <b>У меня для тебя подборка:</b>\n"
-                "8 нейросетей, которые ведут мой Instagram\n"
-                "на полном автопилоте.\n\n"
+                f"🎁 <b>У меня для тебя подборка:</b>\n"
+                f"{lead_title}\n\n"
                 "Чтобы получить — подпишись на канал 👇\n"
                 "и нажми «✅ Я подписался»"
             )
             gate_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📣 Подписаться на канал", url=CHANNEL_LINK)],
-                [InlineKeyboardButton(text="✅ Я подписался — забрать подборку", callback_data="check_lead_sub")],
+                [InlineKeyboardButton(text="✅ Я подписался — забрать подборку", callback_data=f"check_lead_sub:{lead_code}")],
             ])
             await message.answer(gate_text, reply_markup=gate_kb)
             return
 
-        await _send_lead_magnet(message.from_user.id)
+        await _send_lead_magnet(message.from_user.id, lead_code)
         return
 
     text = (
@@ -1754,25 +1756,59 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=goal_kb())
 
 
-async def _send_lead_magnet(chat_id: int):
-    """Отправляет лид-магнит: PDF-файл + короткое CTA-сообщение с кнопками."""
-    import lead_pdf
+def _get_lead_title(lead_code: str) -> str:
+    """Возвращает название лид-магнита из реестра."""
+    registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "leads_registry.json")
+    try:
+        if os.path.exists(registry_path):
+            registry = json.loads(open(registry_path, encoding="utf-8").read())
+            return registry.get(lead_code, {}).get("title", "Полезный гайд по AI")
+    except Exception:
+        pass
+    return "8 нейросетей для Instagram на автопилоте"
 
+
+def _get_lead_pdf_path(lead_code: str):
+    """Возвращает путь к PDF файлу лид-магнита."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    registry_path = os.path.join(base_dir, "leads_registry.json")
+    try:
+        if os.path.exists(registry_path):
+            registry = json.loads(open(registry_path, encoding="utf-8").read())
+            filename = registry.get(lead_code, {}).get("filename")
+            if filename:
+                candidate = os.path.join(base_dir, filename)
+                if os.path.exists(candidate):
+                    return candidate, filename
+    except Exception:
+        pass
+    # Fallback: стандартный PDF
+    return os.path.join(base_dir, "lead_magnet.pdf"), "8_AI_агентов_для_Instagram.pdf"
+
+
+async def _send_lead_magnet(chat_id: int, lead_code: str = "lead"):
+    """Отправляет лид-магнит: PDF-файл + CTA. Поддерживает динамические deeplink."""
     lead_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎓 2 дня БЕСПЛАТНО — начать", callback_data="day1")],
         [InlineKeyboardButton(text="💰 Все тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
     ])
 
+    pdf_path, pdf_filename = _get_lead_pdf_path(lead_code)
+    title = _get_lead_title(lead_code)
+
     try:
-        pdf_path = lead_pdf.generate()
+        if not os.path.exists(pdf_path):
+            import lead_pdf
+            pdf_path = lead_pdf.generate()
+            pdf_filename = "8_AI_агентов_для_Instagram.pdf"
+
         await bot.send_document(
             chat_id,
-            document=FSInputFile(pdf_path, filename="8_AI_агентов_для_Instagram.pdf"),
+            document=FSInputFile(pdf_path, filename=pdf_filename),
             caption=(
-                "🎁 <b>Твой гайд готов!</b>\n\n"
-                "Внутри — 8 AI-агентов с промптами и инструментами,\n"
-                "которые прямо сейчас ведут мой Instagram.\n\n"
+                f"🎁 <b>Твой гайд готов!</b>\n\n"
+                f"{title}\n\n"
                 "📌 Сохрани PDF — пригодится.\n\n"
                 "🔥 Хочешь собрать такую же систему за 7 дней?\n"
                 "Первые 2 дня курса — <b>бесплатно</b> 👇"
@@ -1814,23 +1850,28 @@ async def cb_ig_sub_check(call: CallbackQuery):
         can_check = False
 
     if not subscribed_tg and can_check:
+        lead_title = _get_lead_title("lead")
         await call.message.answer(
-            f"🎁 Осталось последнее — подпишись на Telegram канал, чтобы получить <b>{LEAD_MAGNET_TOPIC}</b> 👇",
+            f"🎁 Осталось последнее — подпишись на Telegram канал, чтобы получить <b>{lead_title}</b> 👇",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📣 Подписаться на канал", url=CHANNEL_LINK)],
-                [InlineKeyboardButton(text="✅ Я подписался — дай гайд!", callback_data="check_lead_sub")],
+                [InlineKeyboardButton(text="✅ Я подписался — дай гайд!", callback_data="check_lead_sub:lead")],
             ])
         )
         return
 
     track("lead_magnet_unlocked", user_id)
-    await _send_lead_magnet(call.from_user.id)
+    await _send_lead_magnet(call.from_user.id, "lead")
 
 
-@dp.callback_query(lambda c: c.data == "check_lead_sub")
+@dp.callback_query(lambda c: c.data == "check_lead_sub" or c.data.startswith("check_lead_sub:"))
 async def cb_check_lead_sub(call: CallbackQuery):
-    """Проверяет подписку на канал и выдаёт лид-магнит."""
+    """Проверяет подписку на канал и выдаёт лид-магнит (поддерживает dynamic lead codes)."""
     user_id = str(call.from_user.id)
+    # Извлекаем lead_code из callback_data
+    parts = call.data.split(":", 1)
+    lead_code = parts[1] if len(parts) > 1 else "lead"
+
     subscribed = False
     can_check = True
     try:
@@ -1845,8 +1886,8 @@ async def cb_check_lead_sub(call: CallbackQuery):
         return
 
     await call.answer("✅ Подписка подтверждена!")
-    track("lead_magnet_unlocked", user_id)
-    await _send_lead_magnet(call.from_user.id)
+    track(f"lead_magnet_unlocked_{lead_code}", user_id)
+    await _send_lead_magnet(call.from_user.id, lead_code)
 
 
 @dp.callback_query(lambda c: c.data.startswith("goal_"))
