@@ -5116,9 +5116,11 @@ async def _handle_socialapi_webhook(request):
         if event_type == "comment.received":
             comment = data.get("data", {})
             text = (comment.get("content", {}).get("text") or comment.get("text") or "").strip().upper()
-            comment_id = comment.get("id", "")
-            post_id = comment.get("post_id", "")
-            author = comment.get("author", {}).get("username") or comment.get("author", {}).get("name", "")
+            # платформенные ID для API запросов
+            raw = data.get("raw_payload", {}).get("value", {})
+            comment_id = raw.get("id") or comment.get("id", "")
+            post_id = comment.get("platform_post_id") or raw.get("media", {}).get("id") or comment.get("post_id", "")
+            author = raw.get("from", {}).get("username") or comment.get("author", {}).get("name", "")
             # берём account_id из события — работает для Instagram, Threads, Facebook
             account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
             platform = comment.get("platform") or data.get("platform") or "instagram"
