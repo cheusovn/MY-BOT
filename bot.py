@@ -5149,29 +5149,25 @@ async def _handle_socialapi_webhook(request):
                 is_follower = await _ig_is_follower(commenter_ig_id) if platform == "instagram" else True
                 async with aiohttp.ClientSession() as s:
                     headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
-                    base = "https://api.social-api.ai/v2"
+                    base = "https://api.social-api.ai/v1"
                     if not is_follower:
                         # Не подписан — просим подписаться
-                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
                             "account_id": account_id,
-                            "post_id": post_id,
                             "comment_id": comment_id,
                             "text": f"@{author} Подпишись на аккаунт и напиши снова — отправлю подборку в личку! 👇"
                         })
                         logging.info(f"SocialAPI: {author} not a follower, asked to follow")
                     else:
-                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
                             "account_id": account_id,
-                            "post_id": post_id,
                             "comment_id": comment_id,
                             "text": f"@{author} Отправил в личку! 🔥"
                         })
                     # DM через Instagram; Threads/Facebook не поддерживают private reply — шлём обычный ответ
                     if platform == "instagram" and is_follower:
-                        await s.post(f"{base}/comments/private-reply", headers=headers, json={
+                        await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
                             "account_id": account_id,
-                            "post_id": post_id,
-                            "comment_id": comment_id,
                             "text": (
                                 f"Привет, {author}! 👋\n\n"
                                 "Держи подборку — 8 нейросетей, которые ведут мой Instagram на автопилоте.\n\n"
@@ -5183,9 +5179,8 @@ async def _handle_socialapi_webhook(request):
                         pass  # уже ответили выше
                     else:
                         # Threads/Facebook — ссылку на бот добавляем прямо в публичный ответ
-                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
                             "account_id": account_id,
-                            "post_id": post_id,
                             "comment_id": comment_id,
                             "text": (
                                 f"@{author} Держи ссылку 👉 {LEAD_BOT_LINK} — "
