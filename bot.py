@@ -86,34 +86,7 @@ CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/trueman_ai")
 CHANNEL_USERNAME = "trueman_ai"
 MANAGER = "@nikolay_cheusov"
 
-# ─── SocialAPI (Instagram webhook) ─────────────────────────────────────────────
-SOCIALAPI_KEY = os.environ.get("SOCIALAPI_KEY", "")
-SOCIALAPI_ACCOUNT_ID = os.environ.get("SOCIALAPI_ACCOUNT_ID", "acc_01KW8ZNMXZJ15KXBKZVCJF4ENB")
-SOCIALAPI_WEBHOOK_SECRET = os.environ.get("SOCIALAPI_WEBHOOK_SECRET", "")
-META_TOKEN = os.environ.get("META_TOKEN", "")
-IG_BUSINESS_ID = "17841400041927032"
-FB_PAGE_ID = "1134532123070528"
-KEYWORD_TRIGGER = "АГЕНТ"  # ловит и "АГЕНТ" и "АГЕНТЫ"
-LEAD_BOT_LINK = "https://t.me/Trueman_ai_bot?start=lead"
 LEAD_MAGNET_TOPIC = "8 нейросетей, которые ведут Instagram на полном автопилоте"
-
-IG_PUBLIC_REPLIES = [
-    "Уже отправил в личку! 🔥",
-    "Лови в личке! 🚀",
-    "Уже написал тебе в директ ✉️",
-    "Отправил — проверяй личку! 📩",
-    "Готово, смотри директ 👀",
-    "Уже у тебя в личке 🎁",
-    "Написал в директ, лови! ⚡",
-    "Отправил подборку в личку 🙌",
-    "Директ уже ждёт тебя! 💬",
-    "Проверяй личные сообщения 📬",
-    "Написал — смотри директ 🔑",
-    "Уже летит тебе в личку! ✈️",
-    "Всё отправлено, лови в директе 👇",
-    "Подборка уже в твоей личке 🎯",
-    "Написал в директ — не пропусти! 💡",
-]
 
 # ─── Реферальный баланс (₽) ─────────────────────────────────────────────────
 REF_PERCENT = 30        # % с оплаты приглашённого друга → на баланс пригласившего
@@ -1678,25 +1651,6 @@ async def cmd_start(message: Message, state: FSMContext):
             except Exception:
                 pass
 
-    # ── Deeplink: проверка подписки Instagram (?start=ig_check_USERNAME) ────
-    if payload.startswith("ig_check"):
-        ig_username = payload[9:] if len(payload) > 9 else ""  # ig_check_bazookalounge
-        users.setdefault(user_id, {})["ig_username"] = ig_username
-        save_users()
-        track("ig_check_start", user_id)
-        await message.answer(
-            f"👋 <b>Привет!</b>\n\n"
-            f"Чтобы получить <b>{LEAD_MAGNET_TOPIC}</b>, "
-            f"сначала подпишись на Instagram 👇\n\n"
-            f"📸 <a href=\"https://instagram.com/nikolay_cheusov\">@nikolay_cheusov</a>\n\n"
-            f"Когда подпишешься — нажми кнопку:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Подписался на Instagram", callback_data=f"ig_sub_check:{ig_username}")],
-            ]),
-            disable_web_page_preview=True,
-        )
-        return
-
     # ── Deeplink: лид-магнит (?start=lead или ?start=lead_*) ────────────────
     if payload == "lead" or payload.startswith("lead_"):
         lead_code = payload  # "lead" или "lead_agents", "lead_prompts", ...
@@ -1824,44 +1778,6 @@ async def _send_lead_magnet(chat_id: int, lead_code: str = "lead"):
             "Первые 2 дня — <b>бесплатно, без карты</b> 👇",
             reply_markup=lead_kb,
         )
-
-
-@dp.callback_query(lambda c: c.data.startswith("ig_sub_check:"))
-async def cb_ig_sub_check(call: CallbackQuery):
-    """Проверяет подписку на Instagram и при успехе переходит к Telegram-каналу."""
-    user_id = str(call.from_user.id)
-    ig_username = call.data.split(":", 1)[1]
-    track("ig_sub_check", user_id)
-
-    is_follower = await _ig_is_follower_by_username(ig_username)
-    if not is_follower:
-        await call.answer("❌ Пока не вижу подписки. Подпишись на @nikolay_cheusov и нажми снова!", show_alert=True)
-        return
-
-    await call.answer("✅ Отлично, подписка подтверждена!")
-    # Переходим к проверке Telegram-канала
-    subscribed_tg = False
-    can_check = True
-    try:
-        member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", call.from_user.id)
-        subscribed_tg = member.status in ("member", "administrator", "creator")
-    except Exception as e:
-        logging.warning(f"ig_sub_check: tg channel check failed: {e}")
-        can_check = False
-
-    if not subscribed_tg and can_check:
-        lead_title = _get_lead_title("lead")
-        await call.message.answer(
-            f"🎁 Осталось последнее — подпишись на Telegram канал, чтобы получить <b>{lead_title}</b> 👇",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📣 Подписаться на канал", url=CHANNEL_LINK)],
-                [InlineKeyboardButton(text="✅ Я подписался — дай гайд!", callback_data="check_lead_sub:lead")],
-            ])
-        )
-        return
-
-    track("lead_magnet_unlocked", user_id)
-    await _send_lead_magnet(call.from_user.id, "lead")
 
 
 @dp.callback_query(lambda c: c.data == "check_lead_sub" or c.data.startswith("check_lead_sub:"))
@@ -5216,212 +5132,6 @@ async def cb_fallback_anything(message: Message):
 # Без env HEALTH_PORT (default 80) — пытаемся 80, при OSError молча пропускаем
 # (например, локально без прав на 80).
 
-async def _ig_send_dm_with_button(recipient_ig_id: str, text: str, button_title: str, button_payload: str):
-    """Отправляет Instagram DM с кнопкой через Graph API Messaging."""
-    if not META_TOKEN:
-        return
-    url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/messages"
-    payload = {
-        "recipient": {"id": recipient_ig_id},
-        "message": {
-            "attachment": {
-                "type": "template",
-                "payload": {
-                    "template_type": "button",
-                    "text": text,
-                    "buttons": [{"type": "postback", "title": button_title, "payload": button_payload}],
-                },
-            }
-        },
-        "messaging_type": "RESPONSE",
-        "access_token": META_TOKEN,
-    }
-    try:
-        s = await get_http()
-        async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as r:
-            resp = await r.json()
-            logging.info(f"IG DM with button sent to {recipient_ig_id}: {resp}")
-    except Exception as e:
-        logging.warning(f"IG DM with button failed: {e}")
-
-
-async def _ig_is_follower(user_id: str) -> bool:
-    """Проверяет подписан ли пользователь (user_id) на наш Instagram-аккаунт через Graph API."""
-    if not META_TOKEN:
-        return True  # если токена нет — пропускаем проверку
-    url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}/followers"
-    params = {"user_id": user_id, "access_token": META_TOKEN}
-    try:
-        s = await get_http()
-        async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
-            data = await r.json()
-            items = data.get("data", [])
-            if not items:
-                return True  # API не поддерживает фильтр по user_id — fail-open
-            return any(str(u.get("id")) == str(user_id) for u in items)
-    except Exception as e:
-        logging.warning(f"IG follower check failed: {e}")
-        return True  # fail-open: при ошибке не блокируем
-
-
-async def _ig_is_follower_by_username(ig_username: str) -> bool:
-    """Проверяет подписан ли пользователь (по username) через Business Discovery API."""
-    if not META_TOKEN or not ig_username:
-        return True
-    try:
-        s = await get_http()
-        # Получаем IG user_id по username через Business Discovery
-        url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}"
-        params = {
-            "fields": f"business_discovery.fields(id,username)@filter(username='{ig_username}')",
-            "access_token": META_TOKEN,
-        }
-        async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
-            data = await r.json()
-        ig_user = data.get("business_discovery", {})
-        target_id = ig_user.get("id")
-        if not target_id:
-            return True  # не нашли пользователя — fail-open
-        return await _ig_is_follower(target_id)
-    except Exception as e:
-        logging.warning(f"IG follower check by username failed: {e}")
-        return True
-
-
-async def _handle_socialapi_webhook(request):
-    """Обработка webhook от SocialAPI — comment.received."""
-    from aiohttp import web
-    import hashlib, hmac as _hmac
-    try:
-        body = await request.read()
-        if SOCIALAPI_WEBHOOK_SECRET:
-            sig = request.headers.get("X-Signature", "")
-            expected = _hmac.new(SOCIALAPI_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
-            if not _hmac.compare_digest(sig, expected):
-                logging.warning("SocialAPI webhook: invalid signature")
-                return web.json_response({"error": "invalid signature"}, status=401)
-        data = json.loads(body)
-        event_type = data.get("event") or data.get("type", "")
-        logging.info(f"SocialAPI webhook: {event_type}")
-
-        if event_type == "comment.received":
-            import funnel_handler as _fh
-            import random as _random
-
-            comment    = data.get("data", {})
-            raw        = data.get("raw_payload", {}).get("value", {})
-            text       = (comment.get("content", {}).get("text") or comment.get("text") or "").strip()
-            comment_id = raw.get("id") or comment.get("id", "")
-            post_id    = (comment.get("platform_post_id")
-                          or raw.get("media", {}).get("id")
-                          or comment.get("post_id", ""))
-            author         = raw.get("from", {}).get("username") or comment.get("author", {}).get("name", "")
-            commenter_ig_id = raw.get("from", {}).get("id", "")
-            account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
-            platform   = (comment.get("platform") or data.get("platform") or "instagram").lower()
-
-            # Ищем кампанию по ключевому слову во ВСЕХ активных кампаниях
-            campaign = _fh.find_campaign(text)
-
-            if campaign and SOCIALAPI_KEY:
-                lead_magnet_name = campaign.get("lead_magnet_name", LEAD_MAGNET_TOPIC)
-                telegram_deeplink = campaign.get("telegram_deeplink", LEAD_BOT_LINK)
-                is_follower = await _ig_is_follower(commenter_ig_id) if platform == "instagram" else True
-
-                async with aiohttp.ClientSession() as s:
-                    headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
-                    base = "https://api.social-api.ai/v1"
-
-                    # Всегда публично отвечаем рандомной фразой
-                    public_reply = _random.choice(IG_PUBLIC_REPLIES) if platform == "instagram" \
-                        else _random.choice(_fh.FB_THREADS_REPLIES)
-                    await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
-                        "account_id": account_id,
-                        "comment_id": comment_id,
-                        "text": f"@{author} {public_reply}",
-                    })
-
-                    if platform == "instagram":
-                        if is_follower:
-                            await s.post(
-                                f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply",
-                                headers=headers,
-                                json={
-                                    "account_id": account_id,
-                                    "text": (
-                                        f"Привет, {author}! 👋\n\n"
-                                        f"Хочешь получить: «{lead_magnet_name}»?\n\n"
-                                        f"Держи ссылку 👉 {telegram_deeplink}\n\n"
-                                        "Там подпишись на канал и забирай гайд бесплатно 🎁"
-                                    ),
-                                },
-                            )
-                        else:
-                            btn_payload = f"ig_sub:{commenter_ig_id}:{campaign.get('id', 'default')}"
-                            await _ig_send_dm_with_button(
-                                commenter_ig_id,
-                                text=(
-                                    f"Привет, {author}! 👋\n\n"
-                                    f"Чтобы получить: «{lead_magnet_name}» 🎁\n\n"
-                                    f"Подпишись на @nikolay_cheusov и нажми кнопку 👇"
-                                ),
-                                button_title="✅ Подписался!",
-                                button_payload=btn_payload,
-                            )
-                    else:
-                        # Facebook / Threads — ссылка в шапке (private reply не поддерживается)
-                        pass  # публичный ответ уже отправлен выше
-
-                logging.info(
-                    f"SocialAPI webhook: replied to @{author} on {platform} "
-                    f"keyword='{campaign['keyword']}' follower={is_follower}"
-                )
-
-        # ─── Instagram postback (нажатие кнопки «Подписался») ──────────────
-        elif event_type in ("messaging_postbacks", "message") or data.get("object") == "instagram":
-            # Обрабатываем postback от кнопки
-            entries = data.get("entry", [])
-            for entry in entries:
-                for msg_event in entry.get("messaging", []):
-                    postback = msg_event.get("postback", {})
-                    pb_payload = postback.get("payload", "")
-                    sender_id = msg_event.get("sender", {}).get("id", "")
-                    if pb_payload.startswith("ig_sub:") and sender_id:
-                        import funnel_handler as _fh
-                        # payload = "ig_sub:{ig_user_id}:{campaign_id}"
-                        pb_parts   = pb_payload.split(":", 2)
-                        ig_user_id = pb_parts[1] if len(pb_parts) > 1 else sender_id
-                        camp_id    = pb_parts[2] if len(pb_parts) > 2 else "default"
-                        # Ищем кампанию по id
-                        all_camps  = _fh.load_campaigns()
-                        campaign   = next((c for c in all_camps if c.get("id") == camp_id), None)
-                        deeplink   = campaign["telegram_deeplink"] if campaign else LEAD_BOT_LINK
-                        lead_name  = campaign["lead_magnet_name"] if campaign else LEAD_MAGNET_TOPIC
-
-                        is_now_follower = await _ig_is_follower(ig_user_id)
-                        reply_url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}/messages"
-                        if is_now_follower:
-                            reply_text = (
-                                f"Отлично, подписка подтверждена! ✅\n\n"
-                                f"Держи «{lead_name}» 👉 {deeplink}\n\n"
-                                "Там подпишись на канал — и гайд твой 🎁"
-                            )
-                        else:
-                            reply_text = "Пока не вижу подписки 🙈 Подпишись на @nikolay_cheusov и нажми кнопку снова!"
-                        if META_TOKEN:
-                            s_http = await get_http()
-                            await s_http.post(reply_url, json={
-                                "recipient": {"id": sender_id},
-                                "message": {"text": reply_text},
-                                "messaging_type": "RESPONSE",
-                                "access_token": META_TOKEN,
-                            })
-
-        return web.json_response({"ok": True})
-    except Exception as e:
-        logging.exception(f"SocialAPI webhook error: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
 
 async def _start_healthcheck():
     try:
@@ -5434,7 +5144,7 @@ async def _start_healthcheck():
         app = web.Application()
         app.router.add_get("/", health)
         app.router.add_get("/health", health)
-        app.router.add_post("/webhook/socialapi", _handle_socialapi_webhook)
+
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
