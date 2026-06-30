@@ -1677,6 +1677,25 @@ async def cmd_start(message: Message, state: FSMContext):
             except Exception:
                 pass
 
+    # ── Deeplink: проверка подписки Instagram (?start=ig_check_USERNAME) ────
+    if payload.startswith("ig_check"):
+        ig_username = payload[9:] if len(payload) > 9 else ""  # ig_check_bazookalounge
+        users.setdefault(user_id, {})["ig_username"] = ig_username
+        save_users()
+        track("ig_check_start", user_id)
+        await message.answer(
+            f"👋 <b>Привет!</b>\n\n"
+            f"Чтобы получить <b>{LEAD_MAGNET_TOPIC}</b>, "
+            f"сначала подпишись на Instagram 👇\n\n"
+            f"📸 <a href=\"https://instagram.com/nikolay_cheusov\">@nikolay_cheusov</a>\n\n"
+            f"Когда подпишешься — нажми кнопку:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Подписался на Instagram", callback_data=f"ig_sub_check:{ig_username}")],
+            ]),
+            disable_web_page_preview=True,
+        )
+        return
+
     # ── Deeplink: лид-магнит (?start=lead) ──────────────────────────────────
     if payload == "lead":
         track("lead_magnet", user_id)
@@ -1768,6 +1787,43 @@ async def _send_lead_magnet(chat_id: int):
             "Первые 2 дня — <b>бесплатно, без карты</b> 👇",
             reply_markup=lead_kb,
         )
+
+
+@dp.callback_query(lambda c: c.data.startswith("ig_sub_check:"))
+async def cb_ig_sub_check(call: CallbackQuery):
+    """Проверяет подписку на Instagram и при успехе переходит к Telegram-каналу."""
+    user_id = str(call.from_user.id)
+    ig_username = call.data.split(":", 1)[1]
+    track("ig_sub_check", user_id)
+
+    is_follower = await _ig_is_follower_by_username(ig_username)
+    if not is_follower:
+        await call.answer("❌ Пока не вижу подписки. Подпишись на @nikolay_cheusov и нажми снова!", show_alert=True)
+        return
+
+    await call.answer("✅ Отлично, подписка подтверждена!")
+    # Переходим к проверке Telegram-канала
+    subscribed_tg = False
+    can_check = True
+    try:
+        member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", call.from_user.id)
+        subscribed_tg = member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        logging.warning(f"ig_sub_check: tg channel check failed: {e}")
+        can_check = False
+
+    if not subscribed_tg and can_check:
+        await call.message.answer(
+            f"🎁 Осталось последнее — подпишись на Telegram канал, чтобы получить <b>{LEAD_MAGNET_TOPIC}</b> 👇",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📣 Подписаться на канал", url=CHANNEL_LINK)],
+                [InlineKeyboardButton(text="✅ Я подписался — дай гайд!", callback_data="check_lead_sub")],
+            ])
+        )
+        return
+
+    track("lead_magnet_unlocked", user_id)
+    await _send_lead_magnet(call.from_user.id)
 
 
 @dp.callback_query(lambda c: c.data == "check_lead_sub")
@@ -5128,11 +5184,37 @@ async def _ig_is_follower(user_id: str) -> bool:
         s = await get_http()
         async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
             data = await r.json()
-            users = data.get("data", [])
-            return any(str(u.get("id")) == str(user_id) for u in users)
+            items = data.get("data", [])
+            if not items:
+                return True  # API не поддерживает фильтр по user_id — fail-open
+            return any(str(u.get("id")) == str(user_id) for u in items)
     except Exception as e:
         logging.warning(f"IG follower check failed: {e}")
         return True  # fail-open: при ошибке не блокируем
+
+
+async def _ig_is_follower_by_username(ig_username: str) -> bool:
+    """Проверяет подписан ли пользователь (по username) через Business Discovery API."""
+    if not META_TOKEN or not ig_username:
+        return True
+    try:
+        s = await get_http()
+        # Получаем IG user_id по username через Business Discovery
+        url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}"
+        params = {
+            "fields": f"business_discovery.fields(id,username)@filter(username='{ig_username}')",
+            "access_token": META_TOKEN,
+        }
+        async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            data = await r.json()
+        ig_user = data.get("business_discovery", {})
+        target_id = ig_user.get("id")
+        if not target_id:
+            return True  # не нашли пользователя — fail-open
+        return await _ig_is_follower(target_id)
+    except Exception as e:
+        logging.warning(f"IG follower check by username failed: {e}")
+        return True
 
 
 async def _handle_socialapi_webhook(request):
@@ -5189,11 +5271,14 @@ async def _handle_socialapi_webhook(request):
                                 "Там подпишись на канал и забирай гайд бесплатно 🎁"
                             )
                         else:
-                            # Не подписан → DM с просьбой подписаться
+                            # Не подписан → DM со ссылкой на Telegram бот (там кнопка подтверждения)
+                            ig_check_link = f"https://t.me/Trueman_ai_bot?start=ig_check_{author}"
                             dm_text = (
                                 f"Привет, {author}! 👋\n\n"
-                                f"Я вижу ты ещё не подписан на мой аккаунт @nikolay_cheusov 🙈\n\n"
-                                f"Подпишись и напиши снова «АГЕНТЫ» — сразу пришлю тебе: {LEAD_MAGNET_TOPIC} 🎁"
+                                f"Чтобы получить: {LEAD_MAGNET_TOPIC} 🎁\n\n"
+                                f"1️⃣ Подпишись на @nikolay_cheusov в Instagram\n"
+                                f"2️⃣ Переходи сюда 👉 {ig_check_link}\n"
+                                f"3️⃣ Нажми кнопку «✅ Подписался» — и гайд твой!"
                             )
                         await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
                             "account_id": account_id,
