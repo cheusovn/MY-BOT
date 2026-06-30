@@ -11,3 +11,5 @@ sentry-sdk>=2.18.0
 redis>=5.1.1
 # PDF-генерация для лид-магнита (поддержка TTF/Unicode).
 fpdf2>=2.7.9
+# HTTP-клиент для Meta Graph API (funnel_handler.py)
+requests>=2.32.0
