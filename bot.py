@@ -5305,68 +5305,77 @@ async def _handle_socialapi_webhook(request):
         logging.info(f"SocialAPI webhook: {event_type}")
 
         if event_type == "comment.received":
-            comment = data.get("data", {})
-            text = (comment.get("content", {}).get("text") or comment.get("text") or "").strip().upper()
-            # платформенные ID для API запросов
-            raw = data.get("raw_payload", {}).get("value", {})
-            comment_id = raw.get("id") or comment.get("id", "")
-            post_id = comment.get("platform_post_id") or raw.get("media", {}).get("id") or comment.get("post_id", "")
-            author = raw.get("from", {}).get("username") or comment.get("author", {}).get("name", "")
-            # берём account_id из события — работает для Instagram, Threads, Facebook
-            account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
-            platform = comment.get("platform") or data.get("platform") or "instagram"
+            import funnel_handler as _fh
+            import random as _random
 
-            if KEYWORD_TRIGGER in text and SOCIALAPI_KEY:
-                import random as _random
-                commenter_ig_id = raw.get("from", {}).get("id", "")
+            comment    = data.get("data", {})
+            raw        = data.get("raw_payload", {}).get("value", {})
+            text       = (comment.get("content", {}).get("text") or comment.get("text") or "").strip()
+            comment_id = raw.get("id") or comment.get("id", "")
+            post_id    = (comment.get("platform_post_id")
+                          or raw.get("media", {}).get("id")
+                          or comment.get("post_id", ""))
+            author         = raw.get("from", {}).get("username") or comment.get("author", {}).get("name", "")
+            commenter_ig_id = raw.get("from", {}).get("id", "")
+            account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
+            platform   = (comment.get("platform") or data.get("platform") or "instagram").lower()
+
+            # Ищем кампанию по ключевому слову во ВСЕХ активных кампаниях
+            campaign = _fh.find_campaign(text)
+
+            if campaign and SOCIALAPI_KEY:
+                lead_magnet_name = campaign.get("lead_magnet_name", LEAD_MAGNET_TOPIC)
+                telegram_deeplink = campaign.get("telegram_deeplink", LEAD_BOT_LINK)
                 is_follower = await _ig_is_follower(commenter_ig_id) if platform == "instagram" else True
+
                 async with aiohttp.ClientSession() as s:
                     headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
                     base = "https://api.social-api.ai/v1"
 
                     # Всегда публично отвечаем рандомной фразой
-                    public_text = f"@{author} " + _random.choice(IG_PUBLIC_REPLIES)
+                    public_reply = _random.choice(IG_PUBLIC_REPLIES) if platform == "instagram" \
+                        else _random.choice(_fh.FB_THREADS_REPLIES)
                     await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
                         "account_id": account_id,
                         "comment_id": comment_id,
-                        "text": public_text,
+                        "text": f"@{author} {public_reply}",
                     })
 
                     if platform == "instagram":
                         if is_follower:
-                            # Подписан → plain DM с ссылкой на бот (private-reply)
-                            await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
-                                "account_id": account_id,
-                                "text": (
-                                    f"Привет, {author}! 👋\n\n"
-                                    f"Хочешь получить: {LEAD_MAGNET_TOPIC}?\n\n"
-                                    f"Держи ссылку 👉 {LEAD_BOT_LINK}\n\n"
-                                    "Там подпишись на канал и забирай гайд бесплатно 🎁"
-                                ),
-                            })
+                            await s.post(
+                                f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply",
+                                headers=headers,
+                                json={
+                                    "account_id": account_id,
+                                    "text": (
+                                        f"Привет, {author}! 👋\n\n"
+                                        f"Хочешь получить: «{lead_magnet_name}»?\n\n"
+                                        f"Держи ссылку 👉 {telegram_deeplink}\n\n"
+                                        "Там подпишись на канал и забирай гайд бесплатно 🎁"
+                                    ),
+                                },
+                            )
                         else:
-                            # Не подписан → DM с кнопкой через Instagram Messaging API
-                            btn_payload = f"ig_sub:{commenter_ig_id}"
+                            btn_payload = f"ig_sub:{commenter_ig_id}:{campaign.get('id', 'default')}"
                             await _ig_send_dm_with_button(
                                 commenter_ig_id,
                                 text=(
                                     f"Привет, {author}! 👋\n\n"
-                                    f"Чтобы получить: {LEAD_MAGNET_TOPIC} 🎁\n\n"
+                                    f"Чтобы получить: «{lead_magnet_name}» 🎁\n\n"
                                     f"Подпишись на @nikolay_cheusov и нажми кнопку 👇"
                                 ),
                                 button_title="✅ Подписался!",
                                 button_payload=btn_payload,
                             )
                     else:
-                        # Threads/Facebook — private reply не поддерживается, добавляем ссылку в публичный ответ
-                        if is_follower:
-                            await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
-                                "account_id": account_id,
-                                "comment_id": comment_id,
-                                "text": f"@{author} Держи 👉 {LEAD_BOT_LINK} — подпишись на канал и забирай гайд 🎁",
-                            })
+                        # Facebook / Threads — ссылка в шапке (private reply не поддерживается)
+                        pass  # публичный ответ уже отправлен выше
 
-                logging.info(f"SocialAPI: replied to @{author} on {platform}, follower={is_follower}")
+                logging.info(
+                    f"SocialAPI webhook: replied to @{author} on {platform} "
+                    f"keyword='{campaign['keyword']}' follower={is_follower}"
+                )
 
         # ─── Instagram postback (нажатие кнопки «Подписался») ──────────────
         elif event_type in ("messaging_postbacks", "message") or data.get("object") == "instagram":
@@ -5378,13 +5387,23 @@ async def _handle_socialapi_webhook(request):
                     pb_payload = postback.get("payload", "")
                     sender_id = msg_event.get("sender", {}).get("id", "")
                     if pb_payload.startswith("ig_sub:") and sender_id:
-                        ig_user_id = pb_payload.split(":", 1)[1]
+                        import funnel_handler as _fh
+                        # payload = "ig_sub:{ig_user_id}:{campaign_id}"
+                        pb_parts   = pb_payload.split(":", 2)
+                        ig_user_id = pb_parts[1] if len(pb_parts) > 1 else sender_id
+                        camp_id    = pb_parts[2] if len(pb_parts) > 2 else "default"
+                        # Ищем кампанию по id
+                        all_camps  = _fh.load_campaigns()
+                        campaign   = next((c for c in all_camps if c.get("id") == camp_id), None)
+                        deeplink   = campaign["telegram_deeplink"] if campaign else LEAD_BOT_LINK
+                        lead_name  = campaign["lead_magnet_name"] if campaign else LEAD_MAGNET_TOPIC
+
                         is_now_follower = await _ig_is_follower(ig_user_id)
-                        reply_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/messages"
+                        reply_url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}/messages"
                         if is_now_follower:
                             reply_text = (
                                 f"Отлично, подписка подтверждена! ✅\n\n"
-                                f"Держи 👉 {LEAD_BOT_LINK}\n\n"
+                                f"Держи «{lead_name}» 👉 {deeplink}\n\n"
                                 "Там подпишись на канал — и гайд твой 🎁"
                             )
                         else:
