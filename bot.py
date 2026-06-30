@@ -92,6 +92,7 @@ SOCIALAPI_ACCOUNT_ID = os.environ.get("SOCIALAPI_ACCOUNT_ID", "acc_01KW8ZNMXZJ15
 SOCIALAPI_WEBHOOK_SECRET = os.environ.get("SOCIALAPI_WEBHOOK_SECRET", "")
 META_TOKEN = os.environ.get("META_TOKEN", "")
 IG_BUSINESS_ID = "17841400041927032"
+FB_PAGE_ID = "1134532123070528"
 KEYWORD_TRIGGER = "АГЕНТ"  # ловит и "АГЕНТ" и "АГЕНТЫ"
 LEAD_BOT_LINK = "https://t.me/Trueman_ai_bot?start=lead"
 LEAD_MAGNET_TOPIC = "8 нейросетей, которые ведут Instagram на полном автопилоте"
@@ -5174,6 +5175,35 @@ async def cb_fallback_anything(message: Message):
 # Без env HEALTH_PORT (default 80) — пытаемся 80, при OSError молча пропускаем
 # (например, локально без прав на 80).
 
+async def _ig_send_dm_with_button(recipient_ig_id: str, text: str, button_title: str, button_payload: str):
+    """Отправляет Instagram DM с кнопкой через Graph API Messaging."""
+    if not META_TOKEN:
+        return
+    url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/messages"
+    payload = {
+        "recipient": {"id": recipient_ig_id},
+        "message": {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "button",
+                    "text": text,
+                    "buttons": [{"type": "postback", "title": button_title, "payload": button_payload}],
+                },
+            }
+        },
+        "messaging_type": "RESPONSE",
+        "access_token": META_TOKEN,
+    }
+    try:
+        s = await get_http()
+        async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            resp = await r.json()
+            logging.info(f"IG DM with button sent to {recipient_ig_id}: {resp}")
+    except Exception as e:
+        logging.warning(f"IG DM with button failed: {e}")
+
+
 async def _ig_is_follower(user_id: str) -> bool:
     """Проверяет подписан ли пользователь (user_id) на наш Instagram-аккаунт через Graph API."""
     if not META_TOKEN:
@@ -5263,27 +5293,29 @@ async def _handle_socialapi_webhook(request):
 
                     if platform == "instagram":
                         if is_follower:
-                            # Подписан → DM с лид-магнитом
-                            dm_text = (
-                                f"Привет, {author}! 👋\n\n"
-                                f"Хочешь получить: {LEAD_MAGNET_TOPIC}?\n\n"
-                                f"Держи ссылку 👉 {LEAD_BOT_LINK}\n\n"
-                                "Там подпишись на канал и забирай гайд бесплатно 🎁"
-                            )
+                            # Подписан → plain DM с ссылкой на бот (private-reply)
+                            await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
+                                "account_id": account_id,
+                                "text": (
+                                    f"Привет, {author}! 👋\n\n"
+                                    f"Хочешь получить: {LEAD_MAGNET_TOPIC}?\n\n"
+                                    f"Держи ссылку 👉 {LEAD_BOT_LINK}\n\n"
+                                    "Там подпишись на канал и забирай гайд бесплатно 🎁"
+                                ),
+                            })
                         else:
-                            # Не подписан → DM со ссылкой на Telegram бот (там кнопка подтверждения)
-                            ig_check_link = f"https://t.me/Trueman_ai_bot?start=ig_check_{author}"
-                            dm_text = (
-                                f"Привет, {author}! 👋\n\n"
-                                f"Чтобы получить: {LEAD_MAGNET_TOPIC} 🎁\n\n"
-                                f"1️⃣ Подпишись на @nikolay_cheusov в Instagram\n"
-                                f"2️⃣ Переходи сюда 👉 {ig_check_link}\n"
-                                f"3️⃣ Нажми кнопку «✅ Подписался» — и гайд твой!"
+                            # Не подписан → DM с кнопкой через Instagram Messaging API
+                            btn_payload = f"ig_sub:{commenter_ig_id}"
+                            await _ig_send_dm_with_button(
+                                commenter_ig_id,
+                                text=(
+                                    f"Привет, {author}! 👋\n\n"
+                                    f"Чтобы получить: {LEAD_MAGNET_TOPIC} 🎁\n\n"
+                                    f"Подпишись на @nikolay_cheusov и нажми кнопку 👇"
+                                ),
+                                button_title="✅ Подписался!",
+                                button_payload=btn_payload,
                             )
-                        await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
-                            "account_id": account_id,
-                            "text": dm_text,
-                        })
                     else:
                         # Threads/Facebook — private reply не поддерживается, добавляем ссылку в публичный ответ
                         if is_follower:
@@ -5294,6 +5326,37 @@ async def _handle_socialapi_webhook(request):
                             })
 
                 logging.info(f"SocialAPI: replied to @{author} on {platform}, follower={is_follower}")
+
+        # ─── Instagram postback (нажатие кнопки «Подписался») ──────────────
+        elif event_type in ("messaging_postbacks", "message") or data.get("object") == "instagram":
+            # Обрабатываем postback от кнопки
+            entries = data.get("entry", [])
+            for entry in entries:
+                for msg_event in entry.get("messaging", []):
+                    postback = msg_event.get("postback", {})
+                    pb_payload = postback.get("payload", "")
+                    sender_id = msg_event.get("sender", {}).get("id", "")
+                    if pb_payload.startswith("ig_sub:") and sender_id:
+                        ig_user_id = pb_payload.split(":", 1)[1]
+                        is_now_follower = await _ig_is_follower(ig_user_id)
+                        reply_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/messages"
+                        if is_now_follower:
+                            reply_text = (
+                                f"Отлично, подписка подтверждена! ✅\n\n"
+                                f"Держи 👉 {LEAD_BOT_LINK}\n\n"
+                                "Там подпишись на канал — и гайд твой 🎁"
+                            )
+                        else:
+                            reply_text = "Пока не вижу подписки 🙈 Подпишись на @nikolay_cheusov и нажми кнопку снова!"
+                        if META_TOKEN:
+                            s_http = await get_http()
+                            await s_http.post(reply_url, json={
+                                "recipient": {"id": sender_id},
+                                "message": {"text": reply_text},
+                                "messaging_type": "RESPONSE",
+                                "access_token": META_TOKEN,
+                            })
+
         return web.json_response({"ok": True})
     except Exception as e:
         logging.exception(f"SocialAPI webhook error: {e}")
