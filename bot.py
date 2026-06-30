@@ -92,8 +92,27 @@ SOCIALAPI_ACCOUNT_ID = os.environ.get("SOCIALAPI_ACCOUNT_ID", "acc_01KW8ZNMXZJ15
 SOCIALAPI_WEBHOOK_SECRET = os.environ.get("SOCIALAPI_WEBHOOK_SECRET", "")
 META_TOKEN = os.environ.get("META_TOKEN", "")
 IG_BUSINESS_ID = "17841400041927032"
-KEYWORD_TRIGGER = "АГЕНТЫ"
+KEYWORD_TRIGGER = "АГЕНТ"  # ловит и "АГЕНТ" и "АГЕНТЫ"
 LEAD_BOT_LINK = "https://t.me/Trueman_ai_bot?start=lead"
+LEAD_MAGNET_TOPIC = "8 нейросетей, которые ведут Instagram на полном автопилоте"
+
+IG_PUBLIC_REPLIES = [
+    "Уже отправил в личку! 🔥",
+    "Лови в личке! 🚀",
+    "Уже написал тебе в директ ✉️",
+    "Отправил — проверяй личку! 📩",
+    "Готово, смотри директ 👀",
+    "Уже у тебя в личке 🎁",
+    "Написал в директ, лови! ⚡",
+    "Отправил подборку в личку 🙌",
+    "Директ уже ждёт тебя! 💬",
+    "Проверяй личные сообщения 📬",
+    "Написал — смотри директ 🔑",
+    "Уже летит тебе в личку! ✈️",
+    "Всё отправлено, лови в директе 👇",
+    "Подборка уже в твоей личке 🎯",
+    "Написал в директ — не пропусти! 💡",
+]
 
 # ─── Реферальный баланс (₽) ─────────────────────────────────────────────────
 REF_PERCENT = 30        # % с оплаты приглашённого друга → на баланс пригласившего
@@ -5145,49 +5164,51 @@ async def _handle_socialapi_webhook(request):
             platform = comment.get("platform") or data.get("platform") or "instagram"
 
             if KEYWORD_TRIGGER in text and SOCIALAPI_KEY:
+                import random as _random
                 commenter_ig_id = raw.get("from", {}).get("id", "")
                 is_follower = await _ig_is_follower(commenter_ig_id) if platform == "instagram" else True
                 async with aiohttp.ClientSession() as s:
                     headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
                     base = "https://api.social-api.ai/v1"
-                    if not is_follower:
-                        # Не подписан — просим подписаться
-                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
-                            "account_id": account_id,
-                            "comment_id": comment_id,
-                            "text": f"@{author} Подпишись на аккаунт и напиши снова — отправлю подборку в личку! 👇"
-                        })
-                        logging.info(f"SocialAPI: {author} not a follower, asked to follow")
-                    else:
-                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
-                            "account_id": account_id,
-                            "comment_id": comment_id,
-                            "text": f"@{author} Отправил в личку! 🔥"
-                        })
-                    # DM через Instagram; Threads/Facebook не поддерживают private reply — шлём обычный ответ
-                    if platform == "instagram" and is_follower:
+
+                    # Всегда публично отвечаем рандомной фразой
+                    public_text = f"@{author} " + _random.choice(IG_PUBLIC_REPLIES)
+                    await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
+                        "account_id": account_id,
+                        "comment_id": comment_id,
+                        "text": public_text,
+                    })
+
+                    if platform == "instagram":
+                        if is_follower:
+                            # Подписан → DM с лид-магнитом
+                            dm_text = (
+                                f"Привет, {author}! 👋\n\n"
+                                f"Хочешь получить: {LEAD_MAGNET_TOPIC}?\n\n"
+                                f"Держи ссылку 👉 {LEAD_BOT_LINK}\n\n"
+                                "Там подпишись на канал и забирай гайд бесплатно 🎁"
+                            )
+                        else:
+                            # Не подписан → DM с просьбой подписаться
+                            dm_text = (
+                                f"Привет, {author}! 👋\n\n"
+                                f"Я вижу ты ещё не подписан на мой аккаунт @nikolay_cheusov 🙈\n\n"
+                                f"Подпишись и напиши снова «АГЕНТЫ» — сразу пришлю тебе: {LEAD_MAGNET_TOPIC} 🎁"
+                            )
                         await s.post(f"{base}/inbox/comments/{post_id}/{comment_id}/private-reply", headers=headers, json={
                             "account_id": account_id,
-                            "text": (
-                                f"Привет, {author}! 👋\n\n"
-                                "Держи подборку — 8 нейросетей, которые ведут мой Instagram на автопилоте.\n\n"
-                                f"Переходи в бот 👉 {LEAD_BOT_LINK}\n\n"
-                                "Подпишись на канал и забирай гайд бесплатно 🎁"
-                            )
+                            "text": dm_text,
                         })
-                    elif not is_follower:
-                        pass  # уже ответили выше
                     else:
-                        # Threads/Facebook — ссылку на бот добавляем прямо в публичный ответ
-                        await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
-                            "account_id": account_id,
-                            "comment_id": comment_id,
-                            "text": (
-                                f"@{author} Держи ссылку 👉 {LEAD_BOT_LINK} — "
-                                "подпишись на канал и забирай гайд бесплатно 🎁"
-                            )
-                        })
-                logging.info(f"SocialAPI: replied to @{author} on {platform} (keyword '{KEYWORD_TRIGGER}')")
+                        # Threads/Facebook — private reply не поддерживается, добавляем ссылку в публичный ответ
+                        if is_follower:
+                            await s.post(f"{base}/inbox/comments/{post_id}", headers=headers, json={
+                                "account_id": account_id,
+                                "comment_id": comment_id,
+                                "text": f"@{author} Держи 👉 {LEAD_BOT_LINK} — подпишись на канал и забирай гайд 🎁",
+                            })
+
+                logging.info(f"SocialAPI: replied to @{author} on {platform}, follower={is_follower}")
         return web.json_response({"ok": True})
     except Exception as e:
         logging.exception(f"SocialAPI webhook error: {e}")
