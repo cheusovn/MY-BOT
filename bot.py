@@ -90,6 +90,8 @@ MANAGER = "@nikolay_cheusov"
 SOCIALAPI_KEY = os.environ.get("SOCIALAPI_KEY", "")
 SOCIALAPI_ACCOUNT_ID = os.environ.get("SOCIALAPI_ACCOUNT_ID", "acc_01KW8ZNMXZJ15KXBKZVCJF4ENB")
 SOCIALAPI_WEBHOOK_SECRET = os.environ.get("SOCIALAPI_WEBHOOK_SECRET", "")
+META_TOKEN = os.environ.get("META_TOKEN", "")
+IG_BUSINESS_ID = "17841400041927032"
 KEYWORD_TRIGGER = "АГЕНТЫ"
 LEAD_BOT_LINK = "https://t.me/Trueman_ai_bot?start=lead"
 
@@ -5097,6 +5099,23 @@ async def cb_fallback_anything(message: Message):
 # Без env HEALTH_PORT (default 80) — пытаемся 80, при OSError молча пропускаем
 # (например, локально без прав на 80).
 
+async def _ig_is_follower(user_id: str) -> bool:
+    """Проверяет подписан ли пользователь (user_id) на наш Instagram-аккаунт через Graph API."""
+    if not META_TOKEN:
+        return True  # если токена нет — пропускаем проверку
+    url = f"https://graph.facebook.com/v21.0/{IG_BUSINESS_ID}/followers"
+    params = {"user_id": user_id, "access_token": META_TOKEN}
+    try:
+        s = await get_http()
+        async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            data = await r.json()
+            users = data.get("data", [])
+            return any(str(u.get("id")) == str(user_id) for u in users)
+    except Exception as e:
+        logging.warning(f"IG follower check failed: {e}")
+        return True  # fail-open: при ошибке не блокируем
+
+
 async def _handle_socialapi_webhook(request):
     """Обработка webhook от SocialAPI — comment.received."""
     from aiohttp import web
@@ -5126,17 +5145,29 @@ async def _handle_socialapi_webhook(request):
             platform = comment.get("platform") or data.get("platform") or "instagram"
 
             if KEYWORD_TRIGGER in text and SOCIALAPI_KEY:
+                commenter_ig_id = raw.get("from", {}).get("id", "")
+                is_follower = await _ig_is_follower(commenter_ig_id) if platform == "instagram" else True
                 async with aiohttp.ClientSession() as s:
                     headers = {"Authorization": f"Bearer {SOCIALAPI_KEY}", "Content-Type": "application/json"}
                     base = "https://api.social-api.ai/v2"
-                    await s.post(f"{base}/comments/reply", headers=headers, json={
-                        "account_id": account_id,
-                        "post_id": post_id,
-                        "comment_id": comment_id,
-                        "text": f"@{author} Отправил в личку! 🔥"
-                    })
+                    if not is_follower:
+                        # Не подписан — просим подписаться
+                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                            "account_id": account_id,
+                            "post_id": post_id,
+                            "comment_id": comment_id,
+                            "text": f"@{author} Подпишись на аккаунт и напиши снова — отправлю подборку в личку! 👇"
+                        })
+                        logging.info(f"SocialAPI: {author} not a follower, asked to follow")
+                    else:
+                        await s.post(f"{base}/comments/reply", headers=headers, json={
+                            "account_id": account_id,
+                            "post_id": post_id,
+                            "comment_id": comment_id,
+                            "text": f"@{author} Отправил в личку! 🔥"
+                        })
                     # DM через Instagram; Threads/Facebook не поддерживают private reply — шлём обычный ответ
-                    if platform == "instagram":
+                    if platform == "instagram" and is_follower:
                         await s.post(f"{base}/comments/private-reply", headers=headers, json={
                             "account_id": account_id,
                             "post_id": post_id,
@@ -5148,6 +5179,8 @@ async def _handle_socialapi_webhook(request):
                                 "Подпишись на канал и забирай гайд бесплатно 🎁"
                             )
                         })
+                    elif not is_follower:
+                        pass  # уже ответили выше
                     else:
                         # Threads/Facebook — ссылку на бот добавляем прямо в публичный ответ
                         await s.post(f"{base}/comments/reply", headers=headers, json={
