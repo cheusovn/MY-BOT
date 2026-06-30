@@ -5110,15 +5110,15 @@ async def _handle_socialapi_webhook(request):
                 logging.warning("SocialAPI webhook: invalid signature")
                 return web.json_response({"error": "invalid signature"}, status=401)
         data = json.loads(body)
-        event_type = data.get("type", "")
+        event_type = data.get("event") or data.get("type", "")
         logging.info(f"SocialAPI webhook: {event_type}")
 
         if event_type == "comment.received":
             comment = data.get("data", {})
-            text = (comment.get("text") or "").strip().upper()
+            text = (comment.get("content", {}).get("text") or comment.get("text") or "").strip().upper()
             comment_id = comment.get("id", "")
             post_id = comment.get("post_id", "")
-            author = comment.get("author", {}).get("username", "")
+            author = comment.get("author", {}).get("username") or comment.get("author", {}).get("name", "")
             # берём account_id из события — работает для Instagram, Threads, Facebook
             account_id = comment.get("account_id") or data.get("account_id") or SOCIALAPI_ACCOUNT_ID
             platform = comment.get("platform") or data.get("platform") or "instagram"
