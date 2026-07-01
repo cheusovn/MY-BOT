@@ -34,5 +34,23 @@
     "title": "Схема связки 5 AI-инструментов: шаблон для бизнеса на 2026",
     "keyword": "ТОП5",
     "created_at": "2026-07-01T08:36:43.500367"
+  },
+  "lead_fable26": {
+    "filename": "lead_fable26.pdf",
+    "title": "Claude Fable 5: как запустить под свои задачи",
+    "keyword": "ФЕЙБЛ",
+    "created_at": "2026-07-01T09:27:26.336204"
+  },
+  "lead_search26": {
+    "filename": "lead_search26.pdf",
+    "title": "AEO 2026: как попасть в ответы ChatGPT и Claude",
+    "keyword": "ПОИСК",
+    "created_at": "2026-07-01T09:27:35.410459"
+  },
+  "lead_prompt26": {
+    "filename": "lead_prompt26.pdf",
+    "title": "5 промптов для бизнеса: шаблоны copy-paste",
+    "keyword": "ПРОМПТ",
+    "created_at": "2026-07-01T09:27:45.360291"
   }
 }
